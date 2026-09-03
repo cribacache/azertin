@@ -1,0 +1,45 @@
+{% load static %}{% load assets %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>azertin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static_v 'chat/app.css' %}">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="azertin, inicio">azertin<span>7</span></a>
+      <div class="signal" id="connection-card">
+        <span class="signal-dot" id="signal-dot"></span>
+        <span id="connection-title">Conectando</span>
+        <span class="signal-detail" id="connection-detail"></span>
+      </div>
+    </header>
+
+    <section class="chat-panel" aria-label="Conversación con azertin">
+      <div class="messages" id="messages" aria-live="polite" aria-busy="false">
+        <div class="empty-state" id="empty-state">
+          <span class="empty-mark" aria-hidden="true">7</span>
+          <p>Información operacional de Azerta, en una conversación.</p>
+        </div>
+      </div>
+
+      <form class="composer" id="chat-form">
+        {% csrf_token %}
+        <input id="message-input" name="message" autocomplete="off" spellcheck="false"
+               placeholder="Escribe tu consulta" aria-label="Escribe tu consulta">
+        <button type="submit" id="send-button" aria-label="Enviar consulta">
+          <span class="send-label">Enviar</span>
+          <span class="send-arrow" aria-hidden="true">↗</span>
+        </button>
+      </form>
+    </section>
+  </main>
+  <script src="{% static_v 'chat/app.js' %}"></script>
+</body>
+</html>
