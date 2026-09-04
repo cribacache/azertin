@@ -24,9 +24,13 @@
     <section class="chat-panel" aria-label="Conversación con azertin">
       <div class="messages" id="messages" aria-live="polite" aria-busy="false">
         <div class="empty-state" id="empty-state">
-          <span class="empty-mark" aria-hidden="true">7</span>
           <p>Información operacional de Azerta, en una conversación.</p>
         </div>
+      </div>
+
+      <!-- Decorativa: aria-hidden para que no la lean los lectores de pantalla. -->
+      <div class="mascota" id="mascota" data-estado="reposo" aria-hidden="true" hidden>
+        <img id="mascota-img" src="{% static_v 'chat/mascota.png' %}" alt="">
       </div>
 
       <form class="composer" id="chat-form">

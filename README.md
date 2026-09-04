@@ -267,6 +267,35 @@ la consulta pero no quién es quién.
 viaja igual dentro del mensaje. Si alguien pregunta "¿está Claudio de
 vacaciones?", ese nombre llega al proveedor.
 
+## Mascota
+
+`static/chat/mascota.png` — PNG con transparencia. Es decorativa: si el archivo
+no está, `app.js` la quita del DOM y la app funciona igual.
+
+Reacciona a la conversación cambiando `data-estado`:
+
+| Estado | Cuándo | Animación |
+| --- | --- | --- |
+| `reposo` | por defecto | flota suave |
+| `pensando` | mientras espera la respuesta | se balancea más rápido, se ladea |
+| `feliz` | respuesta correcta, o al hacerle clic | salto con aplaste y estiramiento |
+| `apenado` | respuesta de respaldo o error | se encoge y se ladea hacia abajo |
+
+Con el chat vacío va centrada y grande; al llegar el primer mensaje se achica y
+se ancla al margen izquierdo con `right: calc(50% + 456px)` —al costado de la
+columna de 880px, no a una distancia fija— para que no invade el texto en
+ninguna resolución. Bajo 1180px se apoya en la esquina y baja la opacidad.
+
+Respeta `prefers-reduced-motion`: con esa preferencia activa no anima.
+
+### Regenerar el PNG desde el original
+
+El original está en `assets/mascota-original.jpeg` con fondo opaco. Para volver
+a recortarlo hace falta Pillow (solo para preparar assets, la app no lo usa en
+runtime): se estima el color de fondo con las esquinas, se enmascara por
+distancia de color con borde suavizado, y se recorta el logotipo superior para
+no duplicar el del encabezado.
+
 ## Caché
 
 Tres niveles, todos en la misma tabla de base de datos (`CACHE_BACKEND=locmem`

@@ -146,23 +146,15 @@ body::after {
 .messages::-webkit-scrollbar-track { background: transparent; }
 
 .empty-state {
-  margin: auto;
+  /* arriba del todo: la mascota ocupa la mitad inferior y si el texto se
+     centrara quedarian encima uno del otro */
+  margin: clamp(24px, 9vh, 90px) auto auto;
   text-align: center;
   color: var(--gris-claro);
   animation: aparecer .6s ease both .15s;
 }
 
-.empty-mark {
-  display: block;
-  font-size: 68px;
-  font-weight: 700;
-  line-height: 1;
-  color: var(--rosado);
-  opacity: .2;
-  transform: skew(-12deg);
-}
-
-.empty-state p { margin: 16px 0 0; font-size: 13.5px; max-width: 30ch; }
+.empty-state p { margin: 0 auto; font-size: 13.5px; max-width: 30ch; }
 
 @keyframes aparecer { from { opacity: 0; } to { opacity: 1; } }
 
@@ -374,4 +366,103 @@ body::after {
     transition-duration: .01ms !important;
   }
   .messages { scroll-behavior: auto; }
+}
+
+/* ---------- mascota ---------- */
+/* Se dibuja detras de los mensajes y no recibe clicks salvo en ella misma, para
+   que nunca estorbe la lectura ni tape el campo de escritura. */
+.mascota {
+  position: fixed;
+  left: 50%;
+  bottom: 12vh;
+  z-index: 0;
+  width: clamp(210px, 26vh, 290px);
+  margin-left: calc(clamp(210px, 26vh, 290px) / -2);
+  pointer-events: none;
+  transition: width .5s cubic-bezier(.2,.7,.3,1),
+              margin-left .5s cubic-bezier(.2,.7,.3,1),
+              bottom .5s cubic-bezier(.2,.7,.3,1),
+              opacity .4s ease;
+  animation: flotar 4.5s ease-in-out infinite;
+}
+
+.mascota img {
+  display: block;
+  width: 100%;
+  height: auto;
+  pointer-events: auto;
+  cursor: pointer;
+  filter: drop-shadow(0 22px 34px rgba(0, 0, 0, .45));
+  transform-origin: 50% 92%;
+  transition: transform .35s cubic-bezier(.2,.7,.3,1);
+}
+
+/* Con la conversacion empezada se hace chica y se va al margen. Se ancla al
+   borde de la columna de mensajes (440px = mitad de los 880 del ancho maximo),
+   no a una distancia fija: asi nunca invade el texto, sea cual sea la pantalla. */
+.mascota.acompana {
+  width: 120px;
+  bottom: 13vh;
+  left: auto;
+  margin-left: 0;
+  right: calc(50% + 456px);
+  opacity: .92;
+  animation: flotar 4.5s ease-in-out infinite, pasear 26s ease-in-out infinite;
+}
+
+/* en pantallas angostas no hay margen lateral: se apoya en la esquina */
+/* sin margen lateral suficiente: se apoya en la esquina, mas tenue */
+@media (max-width: 1180px) {
+  .mascota.acompana {
+    width: 92px;
+    right: auto;
+    left: 6px;
+    bottom: 11vh;
+    opacity: .45;
+    animation: flotar 4.5s ease-in-out infinite;
+  }
+}
+
+@media (max-width: 620px) {
+  .mascota { width: 190px; margin-left: -95px; }
+  .mascota.acompana { width: 62px; opacity: .3; bottom: 10vh; }
+}
+
+@keyframes flotar {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-11px); }
+}
+
+/* paseo lento de lado a lado: "se mueve por el chat" sin invadirlo */
+@keyframes pasear {
+  0%, 100% { right: calc(50% + 456px); }
+  50%      { right: calc(50% + 512px); }
+}
+
+/* pensando: se balancea mas rapido, como impaciente */
+.mascota[data-estado="pensando"] { animation: flotar 1.3s ease-in-out infinite; }
+.mascota[data-estado="pensando"] img { animation: ladear 1.3s ease-in-out infinite; }
+
+@keyframes ladear {
+  0%, 100% { transform: rotate(-4deg); }
+  50%      { transform: rotate(4deg); }
+}
+
+/* feliz: un salto con aplaste y estiramiento */
+.mascota[data-estado="feliz"] img { animation: saltar .75s cubic-bezier(.28,.84,.42,1); }
+
+@keyframes saltar {
+  0%   { transform: scale(1, 1)       translateY(0); }
+  22%  { transform: scale(1.12, .86)  translateY(0); }
+  48%  { transform: scale(.93, 1.1)   translateY(-26px) rotate(-5deg); }
+  72%  { transform: scale(1.06, .95)  translateY(0) rotate(3deg); }
+  100% { transform: scale(1, 1)       translateY(0); }
+}
+
+/* apenado: se encoge y baja la mirada cuando la respuesta es de respaldo */
+.mascota[data-estado="apenado"] { animation: flotar 6s ease-in-out infinite; }
+.mascota[data-estado="apenado"] img { transform: rotate(-7deg) scale(.95); }
+
+@media (prefers-reduced-motion: reduce) {
+  .mascota, .mascota img, .mascota[data-estado] img { animation: none !important; }
 }

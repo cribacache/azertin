@@ -4,6 +4,36 @@ const boton = document.querySelector("#send-button");
 const messages = document.querySelector("#messages");
 const vacio = document.querySelector("#empty-state");
 const csrftoken = document.querySelector("[name=csrfmiddlewaretoken]").value;
+const mascota = document.querySelector("#mascota");
+const mascotaImg = document.querySelector("#mascota-img");
+
+/* La mascota es decorativa: si el archivo no está, la app funciona igual.
+   static/chat/mascota.png */
+let animando = null;
+
+if (mascotaImg) {
+  mascotaImg.addEventListener("load", () => { mascota.hidden = false; });
+  mascotaImg.addEventListener("error", () => { mascota.remove(); });
+  if (mascotaImg.complete && mascotaImg.naturalWidth) mascota.hidden = false;
+  // un click le saca un saltito: es lo único con lo que se puede interactuar
+  mascotaImg.addEventListener("click", () => estadoMascota("feliz", 800));
+}
+
+function estadoMascota(estado, volverEn = 0) {
+  if (!mascota || !mascota.isConnected) return;
+  clearTimeout(animando);
+  // reiniciar la animación: sin esto, dos alegrías seguidas no se notan
+  mascota.dataset.estado = "reposo";
+  void mascota.offsetWidth;
+  mascota.dataset.estado = estado;
+  if (volverEn) {
+    animando = setTimeout(() => { mascota.dataset.estado = "reposo"; }, volverEn);
+  }
+}
+
+function acompanarConversacion() {
+  if (mascota && mascota.isConnected) mascota.classList.add("acompana");
+}
 
 const hora = () =>
   new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -13,7 +43,10 @@ function alFinal() {
 }
 
 function quitarVacio() {
-  if (vacio && vacio.isConnected) vacio.remove();
+  if (vacio && vacio.isConnected) {
+    vacio.remove();
+    acompanarConversacion();
+  }
 }
 
 function addMessage(text, type, items = null, meta = null) {
@@ -106,6 +139,7 @@ form.addEventListener("submit", async (event) => {
   addMessage(message, "user");
   input.value = "";
   boton.disabled = true;
+  estadoMascota("pensando");
   const escribiendo = mostrarEscribiendo();
 
   try {
@@ -118,8 +152,11 @@ form.addEventListener("submit", async (event) => {
     escribiendo.remove();
     if (!response.ok) throw new Error(result.error);
     addMessage(result.answer, "bot", result.items, result.meta);
+    // apenada si tuvo que responder de respaldo, contenta si salió bien
+    estadoMascota(result.meta && result.meta.parcial ? "apenado" : "feliz", 2200);
   } catch (error) {
     escribiendo.remove();
+    estadoMascota("apenado", 3000);
     addMessage(
       error.message || "No pude completar la consulta. Inténtalo otra vez en unos segundos.",
       "bot",

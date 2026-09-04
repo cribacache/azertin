@@ -15,12 +15,25 @@ from pathlib import Path
 from django.conf import settings
 from django.core.cache import cache
 
+from . import embeddings, pdf
 from .intents import normalizar
 
-EXTENSIONES = (".md", ".txt")
+EXTENSIONES = (".md", ".txt", ".pdf")
 IGNORADOS = ("leeme", "readme")  # documentacion del repo, no contenido consultable
 MINIMO_SECCION = 120  # menos que esto es un encabezado, no una respuesta
-MINIMO_PUNTAJE = 1.6  # por debajo de esto, la coincidencia es casualidad
+
+# Una seccion larga mezcla varios temas y su embedding queda siendo el promedio
+# de todos: no gana en ninguno. Partirla por parrafos es lo que mas mejora la
+# recuperacion, mas que cambiar el algoritmo de busqueda.
+MAX_SECCION = 700
+MINIMO_PUNTAJE = 1.6   # busqueda lexica sola: por debajo es casualidad
+ESCALA_LEXICA = 6.0    # puntaje lexico que se considera coincidencia plena
+# Umbral cuando hay embeddings. Es alto a proposito: en espanol, cualquier
+# pregunta de RRHH se parece a cualquier seccion de una politica de RRHH, y con
+# un umbral bajo el buscador "encuentra" respuesta para todo. Medido sobre el
+# corpus real: las preguntas que si estan respondidas puntuan 0.63-0.80 y las
+# que no, 0.50-0.59. Al agregar documentos conviene volver a medirlo.
+MINIMO_MEZCLA = 0.61
 
 VACIAS = {
     "que", "cual", "cuales", "como", "cuando", "donde", "quien", "quienes",
@@ -40,15 +53,30 @@ def _palabras(texto):
 # "I. Vacaciones", "2. Solicitud". Sin esto, un archivo sin markdown queda como
 # una sola seccion gigante y cualquier coincidencia devuelve el documento entero.
 _ROMANO = re.compile(r"^\s*[IVXLC]{1,5}[.)]\s+\S")
+# Un reglamento se divide solo: cada articulo es su propio fragmento, que es
+# justo la granularidad que conviene para buscar.
+_ARTICULO = re.compile(r"^\s*(Art[íi]culo\s+\d+\s*°?|Art\.\s*\d+\s*°?)\s*[:.\-]\s*(.*)$",
+                       re.IGNORECASE)
+# "LIBRO I: NORMAS DE ORDEN", "TITULO II: DE LA JORNADA"
+_LIBRO = re.compile(r"^\s*(LIBRO|T[ÍI]TULO|CAP[ÍI]TULO|ANEXO)\s+[IVXLC\d]+\s*[:.\-]?\s*",
+                    re.IGNORECASE)
 _NUMERADO = re.compile(r"^\s*\d{1,2}(\.\d{1,2})*[.)]\s+\S")
+
+
+# Un titulo numerado es corto ("III. Politica entre Privados"). Sin este limite,
+# los items de una lista de definiciones ("5. Empresa: La entidad empleadora que
+# contrata...") se toman como titulos y parten el articulo en pedazos sueltos.
+LARGO_TITULO_NUMERADO = 60
 
 
 def _es_titulo_plano(linea):
     limpia = linea.strip()
     if not limpia or len(limpia) > 90:
         return False
-    if _ROMANO.match(limpia) or _NUMERADO.match(limpia):
+    if _LIBRO.match(limpia):
         return True
+    if _ROMANO.match(limpia) or _NUMERADO.match(limpia):
+        return len(limpia) <= LARGO_TITULO_NUMERADO
     # "Aspectos legales:" es titulo; una frase larga terminada en ":" no lo es.
     return limpia.endswith(":") and len(limpia.split()) <= 8
 
@@ -69,7 +97,15 @@ def _partir_plano(texto, origen):
         secciones.append({"titulo": titulo, "cuerpo": contenido, "origen": origen})
 
     for linea in texto.splitlines():
-        if _es_titulo_plano(linea):
+        articulo = _ARTICULO.match(linea)
+        if articulo:
+            # "Articulo 25°: La jornada..." trae titulo y cuerpo en la misma
+            # linea: se separan para que cada articulo sea un fragmento propio.
+            cerrar(es_portada=not hubo_titulo)
+            hubo_titulo = True
+            titulo = articulo.group(1).strip()
+            cuerpo = [articulo.group(2).strip()] if articulo.group(2).strip() else []
+        elif _es_titulo_plano(linea):
             cerrar(es_portada=not hubo_titulo)
             hubo_titulo = True
             titulo, cuerpo = linea.strip().rstrip(":"), []
@@ -99,6 +135,33 @@ def _partir(texto, origen):
     return secciones
 
 
+def _subdividir(seccion):
+    """Parte una seccion larga en trozos por parrafo, conservando el titulo.
+
+    El titulo se mantiene igual en todos los trozos para que la cita al usuario
+    siga siendo la seccion real del documento.
+    """
+    cuerpo = seccion["cuerpo"]
+    if len(cuerpo) <= MAX_SECCION:
+        return [seccion]
+
+    parrafos = [p.strip() for p in re.split(r"\n\s*\n", cuerpo) if p.strip()]
+    if len(parrafos) < 2:
+        parrafos = [l.strip() for l in cuerpo.splitlines() if l.strip()]
+
+    trozos, actual = [], ""
+    for parrafo in parrafos:
+        if actual and len(actual) + len(parrafo) > MAX_SECCION:
+            trozos.append(actual)
+            actual = parrafo
+        else:
+            actual = f"{actual}\n\n{parrafo}" if actual else parrafo
+    if actual:
+        trozos.append(actual)
+
+    return [{**seccion, "cuerpo": t} for t in trozos]
+
+
 def cargar(forzar=False):
     """Lee la carpeta de documentos. Cacheada; se invalida al cambiar un archivo."""
     carpeta = Path(settings.DOCUMENTOS_DIR)
@@ -119,12 +182,18 @@ def cargar(forzar=False):
 
     secciones = []
     for archivo in archivos:
-        try:
-            texto = archivo.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        if archivo.suffix.lower() == ".pdf":
+            texto = pdf.extraer(archivo)
+        else:
+            try:
+                texto = archivo.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+        if not texto.strip():
             continue
         secciones.extend(_partir(texto, archivo.name))
 
+    secciones = [t for s in secciones for t in _subdividir(s)]
     for seccion in secciones:
         seccion["indice"] = _palabras(seccion["titulo"] + " " + seccion["cuerpo"])
 
@@ -175,6 +244,11 @@ def buscar(mensaje, cuantas=3):
     largos = [len(s["indice"]) or 1 for s in secciones]
     promedio = sum(largos) / len(largos)
 
+    # Semantica: encuentra la seccion aunque la pregunta no comparta palabras
+    # con ella. Si no hay clave o la API falla, queda solo la lexica.
+    vectores = embeddings.vectores_de(secciones)
+    consulta_vec = embeddings.vector_consulta(mensaje) if vectores else None
+
     marcadas = []
     for seccion in secciones:
         cuerpo = {_raiz(p) for p in seccion["indice"]}
@@ -185,7 +259,19 @@ def buscar(mensaje, cuantas=3):
         # por volumen y no por ser la que responde.
         largo = (len(seccion["indice"]) or 1) / promedio
         puntaje /= 0.6 + 0.4 * largo
-        if puntaje >= MINIMO_PUNTAJE:
+
+        # se normaliza a 0..1 para poder mezclarla con el coseno, que ya viene
+        # en esa escala; sin normalizar, la lexica dominaria por magnitud
+        lexico = min(puntaje / ESCALA_LEXICA, 1.0)
+        if consulta_vec:
+            semantico = embeddings.similitud(
+                consulta_vec, vectores.get(seccion.get("firma"))
+            )
+            mezcla = ((1 - settings.EMBEDDINGS_PESO) * lexico
+                      + settings.EMBEDDINGS_PESO * semantico)
+            if mezcla >= MINIMO_MEZCLA:
+                marcadas.append((mezcla, seccion))
+        elif puntaje >= MINIMO_PUNTAJE:
             marcadas.append((puntaje, seccion))
 
     if not marcadas:

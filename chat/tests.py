@@ -867,3 +867,181 @@ class CortesiaTests(TestCase):
         for m in ("hola", "gracias", "chao", "¿quién eres?"):
             self._preguntar(m)
         self.assertEqual(ConsultaNoResuelta.objects.count(), 0)
+
+
+class PdfTests(TestCase):
+    def setUp(self):
+        cache.clear()
+
+    def _pdf(self, paginas):
+        """Arma un PDF de prueba con pymupdf."""
+        import pymupdf
+        carpeta = tempfile.mkdtemp()
+        ruta = Path(carpeta) / "manual.pdf"
+        doc = pymupdf.open()
+        for texto in paginas:
+            pagina = doc.new_page()
+            pagina.insert_text((60, 80), texto, fontsize=11)
+        doc.save(ruta)
+        doc.close()
+        return carpeta, ruta
+
+    def test_extrae_texto_de_un_pdf(self):
+        from chat import pdf
+        _, ruta = self._pdf(["Vigencia:\nRige desde julio de 2025."])
+        texto = pdf.extraer(ruta)
+        self.assertIn("Vigencia", texto)
+        self.assertIn("julio de 2025", texto)
+
+    def test_un_pdf_entra_al_indice_de_documentos(self):
+        from chat import documentos
+        carpeta, _ = self._pdf([
+            "Dias administrativos:\nCada colaborador tiene un dia administrativo "
+            "por semestre y no se acumula al siguiente."
+        ])
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            seccion = documentos.responder("dia administrativo por semestre")
+        self.assertIsNotNone(seccion)
+        self.assertIn("semestre", seccion["cuerpo"])
+
+    def test_descarta_encabezados_repetidos(self):
+        from chat import pdf
+        paginas = [f"Azerta - Confidencial\nContenido de la pagina {i}."
+                   for i in range(1, 6)]
+        _, ruta = self._pdf(paginas)
+        texto = pdf.extraer(ruta)
+        self.assertLessEqual(texto.count("Azerta - Confidencial"), 1)
+        self.assertIn("pagina 3", texto)
+
+    def test_un_pdf_sin_texto_no_rompe_nada(self):
+        from chat import documentos, pdf
+        import pymupdf
+        carpeta = tempfile.mkdtemp()
+        ruta = Path(carpeta) / "escaneado.pdf"
+        doc = pymupdf.open()
+        doc.new_page()          # pagina en blanco: simula un escaneo sin OCR
+        doc.save(ruta)
+        doc.close()
+        self.assertEqual(pdf.extraer(ruta), "")
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            self.assertEqual(documentos.cargar(forzar=True), [])
+
+
+class EmbeddingsTests(TestCase):
+    def setUp(self):
+        cache.clear()
+
+    def test_sin_clave_no_se_activan(self):
+        from chat import embeddings
+        self.assertFalse(embeddings.disponible())
+
+    def test_el_coseno_ordena_por_significado(self):
+        from chat import embeddings
+        a = [1.0, 0.0, 0.0]
+        self.assertAlmostEqual(embeddings.similitud(a, [1.0, 0.0, 0.0]), 1.0, places=5)
+        self.assertAlmostEqual(embeddings.similitud(a, [0.0, 1.0, 0.0]), 0.0, places=5)
+        self.assertGreater(embeddings.similitud(a, [0.9, 0.4, 0.0]),
+                           embeddings.similitud(a, [0.3, 0.9, 0.0]))
+
+    def test_tolera_vectores_vacios(self):
+        from chat import embeddings
+        self.assertEqual(embeddings.similitud(None, [1.0]), 0.0)
+        self.assertEqual(embeddings.similitud([1.0], [1.0, 2.0]), 0.0)
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba", EMBEDDINGS_ACTIVOS=True)
+    @patch("chat.embeddings._pedir")
+    def test_la_consulta_no_reintenta_y_cae_a_lexica(self, mock_pedir):
+        """Con la cuota agotada, el usuario no puede esperar 60 s por reintentos."""
+        from chat import embeddings
+        mock_pedir.return_value = None
+        self.assertIsNone(embeddings.vector_consulta("¿cómo pido vacaciones?"))
+        self.assertEqual(mock_pedir.call_args.kwargs.get("reintentos"), 0)
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba", EMBEDDINGS_ACTIVOS=True)
+    @patch("chat.embeddings._pedir", return_value=None)
+    def test_si_la_api_falla_la_busqueda_lexica_sigue(self, mock_pedir):
+        """El requisito duro: los embeddings nunca pueden tumbar una respuesta."""
+        from chat import documentos
+        carpeta = tempfile.mkdtemp()
+        (Path(carpeta) / "politica.txt").write_text(
+            "Dias administrativos:\nCada colaborador tiene derecho a un dia "
+            "administrativo por semestre, que no se acumula.\n", encoding="utf-8")
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            seccion = documentos.responder("dias administrativos por semestre")
+        self.assertIsNotNone(seccion)
+
+
+class ReevaluarTests(TestCase):
+    def setUp(self):
+        cache.clear()
+
+    def test_cierra_las_consultas_que_los_documentos_ya_responden(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from chat.models import ConsultaNoResuelta, registrar
+
+        registrar("¿cuántos días administrativos tengo por semestre?", "sin_intencion")
+        registrar("¿cuánto es el aguinaldo de fiestas patrias?", "sin_intencion")
+
+        carpeta = tempfile.mkdtemp()
+        (Path(carpeta) / "politica.txt").write_text(
+            "Dias administrativos:\nCada colaborador tiene derecho a un dia "
+            "administrativo por semestre, que no se acumula al siguiente.\n",
+            encoding="utf-8")
+
+        salida = StringIO()
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            call_command("reevaluar", "--aplicar", stdout=salida)
+
+        self.assertTrue(ConsultaNoResuelta.objects
+                        .get(mensaje__contains="administrativos").resuelta)
+        # la que nadie documento sigue abierta: el sistema no la puede inventar
+        self.assertFalse(ConsultaNoResuelta.objects
+                         .get(mensaje__contains="aguinaldo").resuelta)
+        self.assertIn("aguinaldo", salida.getvalue())
+
+
+class SubdivisionTests(TestCase):
+    """El tamaño del fragmento importa más que el algoritmo de búsqueda."""
+
+    def setUp(self):
+        cache.clear()
+
+    def test_parte_las_secciones_largas_por_parrafo(self):
+        from chat import documentos
+        carpeta = tempfile.mkdtemp()
+        parrafos = "\n\n".join(
+            f"Parrafo {i} sobre un tema distinto con suficiente texto como para "
+            f"que la seccion supere el maximo permitido por fragmento." for i in range(6)
+        )
+        (Path(carpeta) / "largo.txt").write_text(f"Aspectos legales:\n{parrafos}\n",
+                                                 encoding="utf-8")
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            secciones = documentos.cargar(forzar=True)
+        self.assertGreater(len(secciones), 1)
+        # el título se conserva en cada trozo, para que la cita siga siendo real
+        self.assertTrue(all(s["titulo"] == "Aspectos legales" for s in secciones))
+        self.assertTrue(all(len(s["cuerpo"]) <= documentos.MAX_SECCION + 200
+                            for s in secciones))
+
+    def test_no_parte_las_secciones_cortas(self):
+        from chat import documentos
+        carpeta = tempfile.mkdtemp()
+        (Path(carpeta) / "corto.txt").write_text(
+            "Vigencia:\nEsta politica rige desde el 1 de julio de 2025 para toda "
+            "la oficina y reemplaza cualquier version anterior del documento.\n",
+            encoding="utf-8")
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            self.assertEqual(len(documentos.cargar(forzar=True)), 1)
+
+    def test_no_responde_cuando_no_hay_coincidencia_real(self):
+        """Citar la política equivocada es peor que decir que no se sabe."""
+        from chat import documentos
+        carpeta = tempfile.mkdtemp()
+        (Path(carpeta) / "politica.txt").write_text(
+            "Dias administrativos:\nCada colaborador tiene derecho a un dia "
+            "administrativo por semestre, que no se acumula al siguiente.\n",
+            encoding="utf-8")
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            self.assertIsNone(documentos.responder("¿quién ganó el partido de ayer?"))
+            self.assertIsNone(documentos.responder("cuál es el anexo de recepción"))

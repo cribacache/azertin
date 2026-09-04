@@ -147,6 +147,29 @@ ASISTENTE_SIEMPRE = os.getenv("ASISTENTE_SIEMPRE", "False").lower() == "true"
 # los restituye en la respuesta. No protege el nombre que el usuario escribio.
 ASISTENTE_ANONIMIZAR = os.getenv("ASISTENTE_ANONIMIZAR", "False").lower() == "true"
 
+# Busqueda semantica sobre los documentos. Opcional: sin clave o si la API
+# falla, queda solo la busqueda lexica y la app responde igual.
+EMBEDDINGS_ACTIVOS = os.getenv("EMBEDDINGS_ACTIVOS", "True").lower() == "true"
+EMBEDDINGS_MODELO = os.getenv("EMBEDDINGS_MODELO", "gemini-embedding-001")
+EMBEDDINGS_DIMENSIONES = int(os.getenv("EMBEDDINGS_DIMENSIONES", "768"))
+EMBEDDINGS_LOTE = int(os.getenv("EMBEDDINGS_LOTE", "20"))
+EMBEDDINGS_MAX_CARACTERES = int(os.getenv("EMBEDDINGS_MAX_CARACTERES", "6000"))
+# La capa gratuita permite 100 elementos por minuto. Se deja margen para no
+# chocar con el limite; subir esto solo tiene sentido con plan de pago.
+EMBEDDINGS_RPM = int(os.getenv("EMBEDDINGS_RPM", "85"))
+EMBEDDINGS_REINTENTOS = int(os.getenv("EMBEDDINGS_REINTENTOS", "4"))
+EMBEDDINGS_ARCHIVO = Path(os.getenv("EMBEDDINGS_ARCHIVO", BASE_DIR / ".embeddings.json"))
+
+# Peso de la busqueda semantica frente a la lexica al combinarlas. La lexica
+# gana cuando la pregunta usa el termino exacto; la semantica, cuando lo
+# parafrasea. Usar solo una de las dos es peor que mezclarlas.
+EMBEDDINGS_PESO = float(os.getenv("EMBEDDINGS_PESO", "0.85"))
+
+# Ningun test debe pedir embeddings a la API. Va aca y no en el bloque de mas
+# arriba porque la variable se define despues y lo sobrescribiria.
+if "test" in sys.argv:
+    EMBEDDINGS_ACTIVOS = False
+
 # Segundos que se guarda la respuesta completa a una pregunta. Repetirla dentro
 # de esta ventana no consulta BUK ni gasta tokens.
 RESPUESTA_CACHE_TTL = int(os.getenv("RESPUESTA_CACHE_TTL", "600"))
