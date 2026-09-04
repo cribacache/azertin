@@ -215,6 +215,24 @@ que usa el router:
 La clave de BUK nunca sale del backend, el modelo no ve el payload crudo, y el
 motivo de una licencia médica ya viene descartado desde `chat/buk.py`.
 
+### Cómo se combinan las reglas y el modelo
+
+El modelo no reemplaza al router: se apoyan mutuamente.
+
+- **Las reglas le adelantan los datos.** Antes de llamar al modelo, el router
+  resuelve el rango de fechas y consulta BUK, y le pasa el resultado en el
+  mensaje. Así el modelo responde en una sola llamada en vez de gastar una
+  vuelta pidiendo con una herramienta lo que ya teníamos.
+- **Las reglas quedan de red.** Esa misma consulta se guarda como respaldo. Si
+  el modelo falla o se demora, se entrega la respuesta de las reglas marcada
+  como parcial, en vez de un "no tengo esa información".
+- **Cortacircuitos.** Tras `ASISTENTE_FALLAS_MAX` fallas seguidas (3), se deja
+  de llamar al proveedor por `ASISTENTE_PAUSA_SEGUNDOS` (180) y responden solo
+  las reglas, al instante. Una respuesta exitosa lo reactiva.
+
+El contexto adelantado pasa por la misma anonimización que los resultados de las
+herramientas; si no, sería un atajo que la burla.
+
 ### Orden de resolución
 
 1. Router de reglas — instantáneo, sin tokens. Cubre las preguntas frecuentes.

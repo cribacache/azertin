@@ -41,6 +41,7 @@ function addMessage(text, type, items = null, meta = null) {
       const kind = li.querySelector(".kind");
       kind.textContent = p.detalle ? `${p.tipo} · ${p.detalle}` : p.tipo;
       kind.dataset.cat = p.tipo;
+      li.dataset.cat = p.tipo;
       li.querySelector(".role").textContent = p.cargo;
       li.querySelector(".dates").textContent = `${rango}${dias}${media}${pend}`;
       lista.appendChild(li);
@@ -55,7 +56,9 @@ function addMessage(text, type, items = null, meta = null) {
     if (meta.desde_cache) partes.push("desde caché");
     else partes.push(`${meta.requests_buk} consulta${meta.requests_buk === 1 ? "" : "s"} a BUK`);
     if (meta.intencion === "modelo") partes.push("con modelo");
+    if (meta.parcial) partes.push("respuesta de respaldo");
     if (meta.seccion) partes.push(meta.seccion);
+    if (meta.parcial) tag.dataset.respaldo = "1";
     tag.textContent = partes.join(" · ");
     cuerpo.appendChild(tag);
   }

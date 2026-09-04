@@ -169,12 +169,46 @@ def responder_documento(seccion):
     }
 
 
-def responder_con_modelo(mensaje):
+def contexto_de_reglas(mensaje, hoy):
+    """Lo que las reglas pueden traer sola, para adelantarselo al modelo.
+
+    Le ahorra un viaje: sin esto el modelo pide los datos con una herramienta y
+    recien en la segunda vuelta redacta, que es la mitad de la demora.
+    """
+    try:
+        desde, hasta, etiqueta = intents.detectar_rango(intents.normalizar(mensaje), hoy)
+        registros, _ = buk.fuera(desde, hasta)
+        personas_map, _ = buk.directorio()
+    except buk.BukError:
+        return None
+
+    # Solo lo indispensable: el contexto viaja en cada llamada y cada campo de
+    # mas se paga en latencia.
+    def compacto(r):
+        persona = personas_map.get(r["employee_id"]) or {}
+        cfg = buk.CATEGORIAS.get(r["categoria"], {})
+        return {
+            "nombre": persona.get("nombre") or f"Empleado #{r['employee_id']}",
+            "cargo": persona.get("cargo") or "",
+            "tipo": cfg.get("etiqueta", r["categoria"]),
+            "desde": r["start_date"],
+            "hasta": r["end_date"],
+        }
+
+    return {
+        "hoy": hoy.isoformat(),
+        "rango": f"{desde.isoformat()} a {hasta.isoformat()} ({etiqueta})",
+        "personas_activas": len(personas_map),
+        "fuera_de_jornada": [compacto(r) for r in registros],
+    }
+
+
+def responder_con_modelo(mensaje, contexto=None):
     """Respaldo con modelo de lenguaje. None si no hay clave o si no resolvio."""
     if not asistente.disponible():
         return None
     try:
-        texto, meta = asistente.responder(mensaje, date.today())
+        texto, meta = asistente.responder(mensaje, date.today(), contexto)
     except asistente.SinConfigurar:
         return None
     except Exception as error:  # el modelo no puede tumbar la aplicacion
@@ -191,6 +225,7 @@ def responder_con_modelo(mensaje):
         "items": [],
         "meta": {
             "intencion": "modelo",
+            "con_contexto": bool(contexto),
             "modelo": settings.OPENAI_MODEL,
             "pasos": meta.get("pasos"),
             "herramientas": [h["nombre"] for h in meta.get("herramientas", [])],
@@ -285,9 +320,32 @@ def _resolver(mensaje, hoy):
             seccion = documentos.responder(mensaje)
             if seccion:
                 return responder_documento(seccion)
-        del_modelo = responder_con_modelo(mensaje)
+
+        # Las reglas arman su mejor respuesta ANTES de llamar al modelo. Sirve
+        # de dos maneras: se le pasa como contexto (una vuelta menos) y queda
+        # como red si el modelo falla o se demora.
+        respaldo, contexto = None, None
+        if asistente.disponible():
+            contexto = contexto_de_reglas(mensaje, hoy)
+        try:
+            plan_base = intents.interpretar(mensaje, hoy)
+            plan_base["mensaje"] = mensaje
+            if plan_base["intencion"] == "ausencias":
+                respaldo = responder_ausencias(plan_base)
+        except buk.BukError:
+            respaldo = None
+
+        del_modelo = responder_con_modelo(mensaje, contexto)
         if del_modelo:
             return del_modelo
+        if respaldo:
+            respaldo["meta"]["intencion"] = "reglas_respaldo"
+            respaldo["meta"]["parcial"] = True
+            respaldo["answer"] = (
+                f"{respaldo['answer']} No pude afinar más la respuesta en este "
+                "momento, así que te dejo el detalle completo para que lo revises."
+            )
+            return respaldo
         return responder_sin_datos(mensaje)
 
     plan = intents.interpretar(mensaje)
@@ -324,7 +382,8 @@ def _resolver(mensaje, hoy):
     if seccion:
         return responder_documento(seccion)
 
-    del_modelo = responder_con_modelo(mensaje)
+    contexto = contexto_de_reglas(mensaje, hoy) if asistente.disponible() else None
+    del_modelo = responder_con_modelo(mensaje, contexto)
     if del_modelo:
         return del_modelo
 

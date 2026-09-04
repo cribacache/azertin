@@ -17,7 +17,7 @@ from .intents import normalizar
 
 # Subir esto invalida todo lo cacheado. Cambiarlo al modificar como se arman las
 # respuestas, para no servir el formato viejo desde el cache.
-VERSION = "v6"
+VERSION = "v7"
 
 
 def _canonica(mensaje):
@@ -41,7 +41,15 @@ def obtener(mensaje, hoy):
 
 
 def guardar(mensaje, hoy, respuesta):
-    """Guarda solo respuestas utiles: los errores no se cachean."""
-    if not respuesta or respuesta.get("meta", {}).get("intencion") == "sin_datos":
+    """Guarda solo respuestas definitivas.
+
+    Las parciales (las que dio el respaldo porque el modelo fallo) no se
+    cachean: si no, se seguiria sirviendo la version degradada durante toda la
+    ventana, incluso despues de que el proveedor se recupere.
+    """
+    if not respuesta:
+        return
+    meta = respuesta.get("meta", {})
+    if meta.get("intencion") == "sin_datos" or meta.get("parcial"):
         return
     cache.set(clave(mensaje, hoy), respuesta, settings.RESPUESTA_CACHE_TTL)

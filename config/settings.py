@@ -10,7 +10,38 @@ load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-change-me")
 DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
-ALLOWED_HOSTS = [host.strip() for host in os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",") if host.strip()]
+def _ip_local():
+    """IP de esta maquina en la red local, para servir a otros equipos.
+
+    Se abre un socket UDP sin enviar nada: es la forma portable de saber que
+    interfaz usaria el sistema para salir, sin depender de `ifconfig`.
+    """
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(0.2)
+            s.connect(("192.168.255.255", 1))
+            return s.getsockname()[0]
+    except OSError:
+        return ""
+
+
+ALLOWED_HOSTS = [h.strip() for h in
+                 os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+                 if h.strip()]
+
+# En desarrollo se agrega sola la IP de la red local, para no tener que editar
+# .env cada vez que el router entrega una direccion distinta.
+IP_LOCAL = _ip_local() if DEBUG else ""
+if IP_LOCAL and IP_LOCAL not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(IP_LOCAL)
+
+# El navegador manda Origin en los POST; sin esto el chat falla con 403 CSRF
+# cuando se entra por IP en vez de localhost.
+CSRF_TRUSTED_ORIGINS = [f"http://{h}:8000" for h in ALLOWED_HOSTS if h not in ("localhost",)]
+CSRF_TRUSTED_ORIGINS += [o.strip() for o in
+                         os.getenv("DJANGO_CSRF_ORIGINS", "").split(",") if o.strip()]
 
 INSTALLED_APPS = [
     "django.contrib.staticfiles",
@@ -88,7 +119,12 @@ BUK_VACACIONES_MARGEN = timedelta(days=int(os.getenv("BUK_VACACIONES_MARGEN_DIAS
 # la aplicacion funciona igual y responde "no tengo esa informacion".
 # ASISTENTE_PROVEEDOR: "gemini" (tiene capa gratuita) u "openai".
 ASISTENTE_PROVEEDOR = os.getenv("ASISTENTE_PROVEEDOR", "gemini").lower()
-ASISTENTE_TIMEOUT = int(os.getenv("ASISTENTE_TIMEOUT", "30"))
+ASISTENTE_TIMEOUT = int(os.getenv("ASISTENTE_TIMEOUT", "18"))
+
+# Si el proveedor falla varias veces seguidas se deja de llamar por un rato y
+# responden las reglas al instante. Se reactiva solo al vencer la pausa.
+ASISTENTE_FALLAS_MAX = int(os.getenv("ASISTENTE_FALLAS_MAX", "3"))
+ASISTENTE_PAUSA_SEGUNDOS = int(os.getenv("ASISTENTE_PAUSA_SEGUNDOS", "180"))
 ASISTENTE_MAX_PASOS = int(os.getenv("ASISTENTE_MAX_PASOS", "4"))
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")

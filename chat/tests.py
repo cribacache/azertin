@@ -1,6 +1,6 @@
 import json
 import tempfile
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -24,18 +24,24 @@ EMPLEADOS = {
     ],
 }
 
+# Las fechas se calculan desde hoy: fijarlas hace que la suite empiece a fallar
+# sola cuando cambia el dia, que es justo lo que paso.
+HOY = date.today()
+DIA = timedelta(days=1)
+_f = lambda dias: (HOY + dias * DIA).isoformat()
+
 # /vacations: una en curso que empezo ANTES del rango (el caso que se perdia)
 VACACIONES = {
     "pagination": {"next": None},
     "data": [
         {"id": 1, "employee_id": 335, "type": "legales", "status": "approved",
-         "start_date": "2026-08-24", "end_date": "2026-09-04",
+         "start_date": _f(-10), "end_date": _f(1),
          "workday_stage": "full_working_day", "working_days": 8.0},
         {"id": 2, "employee_id": 468, "type": "dias_administrativos", "status": "approved",
-         "start_date": "2026-09-03", "end_date": "2026-09-03",
+         "start_date": _f(0), "end_date": _f(0),
          "workday_stage": "start_working_day", "working_days": 0.5},
         {"id": 3, "employee_id": 468, "type": "legales", "status": "approved",
-         "start_date": "2026-12-01", "end_date": "2026-12-05",
+         "start_date": _f(88), "end_date": _f(92),
          "workday_stage": "full_working_day", "working_days": 5.0},
     ],
 }
@@ -45,10 +51,10 @@ AUSENCIAS = {
     "pagination": {"next": None},
     "data": [
         {"id": 9, "employee_id": 468, "type": "licence", "status": "approved",
-         "start_date": "2026-09-01", "end_date": "2026-09-05",
+         "start_date": _f(-2), "end_date": _f(2),
          "half_working_day": False, "licence_type": "accidente_comun"},
         {"id": 10, "employee_id": 999, "type": "licence", "status": "rejected",
-         "start_date": "2026-09-03", "end_date": "2026-09-03",
+         "start_date": _f(0), "end_date": _f(0),
          "half_working_day": False, "licence_type": None},
     ],
 }
@@ -151,7 +157,7 @@ class ChatViewTests(TestCase):
     def test_vacaciones_piden_margen_hacia_atras(self, mocked):
         self._preguntar("vacaciones hoy")
         llamada = next(c for c in mocked.call_args_list if "/vacations" in c.args[0])
-        self.assertLess(llamada.kwargs["params"]["date"], "2026-09-03")  # pide desde antes
+        self.assertLess(llamada.kwargs["params"]["date"], HOY.isoformat())  # pide desde antes
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     def test_no_expone_datos_sensibles(self, mocked):
@@ -335,7 +341,7 @@ class AsistenteTests(TestCase):
         crear.side_effect = [
             _respuesta(_Mensaje(tool_calls=[
                 _Llamada("listar_ausencias",
-                         {"desde": "2026-09-03", "hasta": "2026-09-03"})])),
+                         {"desde": _f(0), "hasta": _f(0)})])),
             _respuesta(_Mensaje(content="Hay 3 personas fuera hoy.")),
         ]
         cuerpo = self.client.post(
@@ -351,7 +357,7 @@ class AsistenteTests(TestCase):
     @patch("chat.asistente._cliente_openai")
     def test_la_herramienta_no_entrega_el_motivo_de_la_licencia(self, mock_cliente, mock_buk):
         from chat import herramientas
-        datos = herramientas.listar_ausencias("2026-09-03", "2026-09-03")
+        datos = herramientas.listar_ausencias(_f(0), _f(0))
         crudo = json.dumps(datos, ensure_ascii=False)
         for reservado in ("accidente_comun", "accidente comun", "licence_type", "post natal"):
             self.assertNotIn(reservado, crudo)
@@ -364,7 +370,7 @@ class AsistenteTests(TestCase):
         crear.side_effect = [
             _respuesta(_Mensaje(tool_calls=[
                 _Llamada("listar_ausencias",
-                         {"desde": "2026-09-03", "hasta": "2026-09-03"})])),
+                         {"desde": _f(0), "hasta": _f(0)})])),
             _respuesta(_Mensaje(content="Persona 1 esta de vacaciones.")),
         ]
         cuerpo = self.client.post(
@@ -535,7 +541,7 @@ class GeminiTests(TestCase):
         generar = mock_cliente.return_value.models.generate_content
         generar.side_effect = [
             _respuesta_gemini(llamadas=[_PedidoGemini(
-                "listar_ausencias", {"desde": "2026-09-03", "hasta": "2026-09-03"})]),
+                "listar_ausencias", {"desde": _f(0), "hasta": _f(0)})]),
             _respuesta_gemini(texto="Hay 3 personas fuera hoy."),
         ]
         cuerpo = self._preguntar("hazme un resumen de la carga del equipo")
@@ -550,7 +556,7 @@ class GeminiTests(TestCase):
         generar = mock_cliente.return_value.models.generate_content
         generar.side_effect = [
             _respuesta_gemini(llamadas=[_PedidoGemini(
-                "listar_ausencias", {"desde": "2026-09-03", "hasta": "2026-09-03"})]),
+                "listar_ausencias", {"desde": _f(0), "hasta": _f(0)})]),
             _respuesta_gemini(texto="Persona 1 esta de vacaciones."),
         ]
         cuerpo = self._preguntar("hazme un resumen de la carga del equipo")
@@ -698,7 +704,7 @@ class GeminiFirmaTests(TestCase):
         primera = Mock(
             text=None,
             function_calls=[_PedidoGemini("listar_ausencias",
-                                          {"desde": "2026-09-03", "hasta": "2026-09-03"})],
+                                          {"desde": _f(0), "hasta": _f(0)})],
             candidates=[Mock(content=contenido)],
         )
         generar = mock_cliente.return_value.models.generate_content
@@ -712,3 +718,97 @@ class GeminiFirmaTests(TestCase):
         # no una reconstruccion que pierde el thought_signature
         historial = generar.call_args_list[1].kwargs["contents"]
         self.assertIn(contenido, historial)
+
+
+@SIN_DOCUMENTOS
+@override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba",
+                   ASISTENTE_ANONIMIZAR=False)
+class CombinacionTests(TestCase):
+    """Reglas y modelo trabajando juntos: uno cubre al otro."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _preguntar(self, texto):
+        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
+                                content_type="application/json").json()
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_si_el_modelo_falla_responden_las_reglas(self, mock_cliente, mock_buk):
+        """Antes esto terminaba en 'no tengo esa informacion'."""
+        mock_cliente.return_value.models.generate_content.side_effect = RuntimeError("503")
+        cuerpo = self._preguntar("compara cuánta gente estuvo fuera este mes")
+        self.assertEqual(cuerpo["meta"]["intencion"], "reglas_respaldo")
+        self.assertTrue(cuerpo["meta"]["parcial"])
+        self.assertTrue(cuerpo["items"])  # trae el detalle igual
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_al_modelo_se_le_adelantan_los_datos(self, mock_cliente, mock_buk):
+        """Con el contexto ya resuelto, no necesita una vuelta extra."""
+        generar = mock_cliente.return_value.models.generate_content
+        generar.side_effect = [_respuesta_gemini(texto="Este mes hubo más ausencias.")]
+        cuerpo = self._preguntar("compara cuánta gente estuvo fuera este mes")
+        self.assertEqual(cuerpo["meta"]["intencion"], "modelo")
+        self.assertTrue(cuerpo["meta"]["con_contexto"])
+        self.assertEqual(generar.call_count, 1)  # una sola llamada, no dos
+        enviado = str(generar.call_args.kwargs["contents"])
+        self.assertIn("DATOS YA CONSULTADOS", enviado)
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_tras_varias_fallas_deja_de_llamar_al_modelo(self, mock_cliente, mock_buk):
+        """Cortacircuitos: no esperar el timeout en cada pregunta."""
+        from chat import asistente
+        mock_cliente.return_value.models.generate_content.side_effect = RuntimeError("503")
+        for i in range(settings.ASISTENTE_FALLAS_MAX):
+            self._preguntar(f"compara las ausencias, intento {i}")
+        self.assertTrue(asistente.en_pausa())
+        self.assertFalse(asistente.disponible())
+
+        llamadas = mock_cliente.call_count
+        self._preguntar("compara otra cosa distinta")
+        self.assertEqual(mock_cliente.call_count, llamadas)  # ya no lo intenta
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_un_exito_reactiva_el_modelo(self, mock_cliente, mock_buk):
+        from chat import asistente
+        generar = mock_cliente.return_value.models.generate_content
+        generar.side_effect = [RuntimeError("503"),
+                               _respuesta_gemini(texto="Listo.")]
+        self._preguntar("compara las ausencias de este mes")
+        self._preguntar("compara las ausencias de la semana")
+        self.assertFalse(asistente.en_pausa())
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_las_preguntas_simples_no_tocan_el_modelo(self, mock_cliente, mock_buk):
+        self._preguntar("quien esta fuera hoy")
+        mock_cliente.assert_not_called()
+
+    @override_settings(ASISTENTE_ANONIMIZAR=True)
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_el_contexto_adelantado_tambien_se_anonimiza(self, mock_cliente, mock_buk):
+        generar = mock_cliente.return_value.models.generate_content
+        generar.side_effect = [_respuesta_gemini(texto="Persona 1 está fuera.")]
+        cuerpo = self._preguntar("compara cuánta gente estuvo fuera este mes")
+        enviado = str(generar.call_args.kwargs["contents"])
+        self.assertNotIn("Ana Rojas", enviado)
+        self.assertIn("Ana Rojas", cuerpo["answer"])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_la_respuesta_de_respaldo_no_se_cachea(self, mock_cliente, mock_buk):
+        """Si se cacheara, seguiria dando la version degradada tras recuperarse."""
+        generar = mock_cliente.return_value.models.generate_content
+        generar.side_effect = [RuntimeError("504"),
+                               _respuesta_gemini(texto="Ahora sí: hubo 3 personas fuera.")]
+        primera = self._preguntar("compara cuánta gente estuvo fuera este mes")
+        self.assertEqual(primera["meta"]["intencion"], "reglas_respaldo")
+
+        segunda = self._preguntar("compara cuánta gente estuvo fuera este mes")
+        self.assertFalse(segunda["meta"].get("desde_cache"))
+        self.assertEqual(segunda["meta"]["intencion"], "modelo")

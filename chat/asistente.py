@@ -13,6 +13,7 @@ import logging
 import re
 
 from django.conf import settings
+from django.core.cache import cache
 
 from . import herramientas
 
@@ -37,11 +38,61 @@ Reglas:
 - Texto plano: nada de markdown, negritas ni asteriscos. La interfaz los muestra
   tal cual. Para enumerar personas usa una linea por persona con guion.
 - Si no puedes responder con las herramientas, dilo claramente en una frase.
+- Si el mensaje trae un bloque DATOS YA CONSULTADOS, usalo directamente en vez
+  de volver a pedir lo mismo con una herramienta. Llama a una herramienta solo
+  si necesitas algo que no este ahi.
 """
+
+
+def _con_contexto(mensaje, contexto, alias):
+    """Adjunta lo que las reglas ya trajeron, para ahorrar un viaje al modelo.
+
+    Pasa por el mismo mapa de alias que los resultados de las herramientas: si
+    no, la anonimizacion quedaria burlada por este atajo.
+    """
+    if not contexto:
+        return mensaje
+    if settings.ASISTENTE_ANONIMIZAR:
+        contexto = _anonimizar(contexto, alias)
+    return (
+        f"{mensaje}\n\n--- DATOS YA CONSULTADOS (no los vuelvas a pedir) ---\n"
+        f"{json.dumps(contexto, ensure_ascii=False, default=str)}"
+    )
 
 
 class SinConfigurar(Exception):
     """No hay clave de API cargada para el proveedor elegido."""
+
+
+# ---------------------------------------------------------------------------
+# Cortacircuitos: si el proveedor esta caido o saturado, dejar de llamarlo un
+# rato. Sin esto, cada pregunta espera el timeout completo antes de responder
+# con las reglas, y el chat se siente colgado.
+# ---------------------------------------------------------------------------
+
+CLAVE_FALLAS = "asistente:fallas"
+CLAVE_PAUSA = "asistente:pausa"
+
+
+def en_pausa():
+    return bool(cache.get(CLAVE_PAUSA))
+
+
+def registrar_falla():
+    fallas = (cache.get(CLAVE_FALLAS) or 0) + 1
+    cache.set(CLAVE_FALLAS, fallas, settings.ASISTENTE_PAUSA_SEGUNDOS)
+    if fallas >= settings.ASISTENTE_FALLAS_MAX:
+        cache.set(CLAVE_PAUSA, True, settings.ASISTENTE_PAUSA_SEGUNDOS)
+        cache.delete(CLAVE_FALLAS)
+        logger.warning(
+            "modelo en pausa %ss tras %s fallas seguidas",
+            settings.ASISTENTE_PAUSA_SEGUNDOS, fallas,
+        )
+
+
+def registrar_exito():
+    cache.delete(CLAVE_FALLAS)
+    cache.delete(CLAVE_PAUSA)
 
 
 def proveedor():
@@ -57,7 +108,8 @@ def modelo():
 
 
 def disponible():
-    return bool(clave())
+    """Hay clave y el proveedor no esta en pausa por fallas recientes."""
+    return bool(clave()) and not en_pausa()
 
 
 # --------------------------------------------------------------------------
@@ -145,7 +197,7 @@ def _declaraciones_gemini():
     return [types.Tool(function_declarations=funciones)]
 
 
-def _responder_gemini(mensaje, hoy):
+def _responder_gemini(mensaje, hoy, contexto=None):
     from google.genai import types
 
     cliente = _cliente_gemini()
@@ -158,8 +210,10 @@ def _responder_gemini(mensaje, hoy):
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
 
-    historial = [types.Content(role="user", parts=[types.Part.from_text(text=mensaje)])]
     alias, llamadas, pasos = {}, [], 0
+    historial = [types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=_con_contexto(mensaje, contexto, alias))])]
 
     while pasos < settings.ASISTENTE_MAX_PASOS:
         pasos += 1
@@ -208,12 +262,12 @@ def _cliente_openai():
     return OpenAI(api_key=settings.OPENAI_API_KEY, timeout=settings.ASISTENTE_TIMEOUT)
 
 
-def _responder_openai(mensaje, hoy):
+def _responder_openai(mensaje, hoy, contexto=None):
     cliente = _cliente_openai()
     alias, llamadas, pasos = {}, [], 0
     mensajes = [
         {"role": "system", "content": INSTRUCCIONES.format(hoy=hoy.isoformat())},
-        {"role": "user", "content": mensaje},
+        {"role": "user", "content": _con_contexto(mensaje, contexto, alias)},
     ]
 
     while pasos < settings.ASISTENTE_MAX_PASOS:
@@ -249,13 +303,24 @@ def _responder_openai(mensaje, hoy):
     return None, {"pasos": pasos, "herramientas": llamadas, "agotado": True}
 
 
-def responder(mensaje, hoy):
-    """Devuelve (texto, meta). Lanza SinConfigurar o el error del proveedor."""
-    if not disponible():
+def responder(mensaje, hoy, contexto=None):
+    """Devuelve (texto, meta). Lanza SinConfigurar o el error del proveedor.
+
+    `contexto` es lo que las reglas ya consultaron: entregarselo evita que el
+    modelo gaste un viaje extra pidiendo datos que ya tenemos.
+    """
+    if not clave():
         raise SinConfigurar(
             f"No hay clave para {proveedor()}. Configura "
             f"{'GEMINI_API_KEY' if proveedor() == 'gemini' else 'OPENAI_API_KEY'} en .env"
         )
-    if proveedor() == "gemini":
-        return _responder_gemini(mensaje, hoy)
-    return _responder_openai(mensaje, hoy)
+    try:
+        if proveedor() == "gemini":
+            resultado = _responder_gemini(mensaje, hoy, contexto)
+        else:
+            resultado = _responder_openai(mensaje, hoy, contexto)
+    except Exception:
+        registrar_falla()
+        raise
+    registrar_exito()
+    return resultado

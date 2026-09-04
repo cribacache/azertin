@@ -7,7 +7,7 @@
       "runtimeExecutable": "sh",
       "runtimeArgs": [
         "-c",
-        "exec .venv/bin/python manage.py runserver 127.0.0.1:${PORT:-8000}"
+        "exec .venv/bin/python manage.py runserver 0.0.0.0:${PORT:-8000}"
       ],
       "port": 8000
     }
