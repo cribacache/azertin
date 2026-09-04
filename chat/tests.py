@@ -109,7 +109,31 @@ class IntentTests(TestCase):
         self.assertEqual(plan["desde"], date(2026, 9, 7))
 
     def test_mensaje_sin_relacion_cae_en_ayuda(self):
-        self.assertEqual(intents.interpretar("hola", self.HOY)["intencion"], "ayuda")
+        self.assertEqual(intents.interpretar("cuanto es el aguinaldo", self.HOY)["intencion"],
+                         "ayuda")
+
+    def test_reconoce_la_cortesia_sin_gastar_modelo(self):
+        for mensaje, esperado in (
+            ("hola", "saludo"),
+            ("¡Hola!", "saludo"),
+            ("buenas tardes", "saludo"),
+            ("¿cómo estás?", "saludo"),
+            ("gracias", "gracias"),
+            ("muchas gracias, perfecto", "gracias"),
+            ("chao", "despedida"),
+            ("¿quién eres?", "identidad"),
+            ("¿en qué me puedes ayudar?", "identidad"),
+        ):
+            self.assertEqual(intents.interpretar(mensaje, self.HOY)["intencion"], esperado,
+                             mensaje)
+
+    def test_la_cortesia_no_secuestra_preguntas_reales(self):
+        """"ayuda" y "gracias" aparecen dentro de consultas de verdad."""
+        for mensaje in ("ayudame con las vacaciones de octubre",
+                        "hola, ¿quién está fuera hoy?",
+                        "gracias, ¿y quién está de vacaciones mañana?"):
+            self.assertEqual(intents.interpretar(mensaje, self.HOY)["intencion"], "ausencias",
+                             mensaje)
 
 
 @SIN_DOCUMENTOS
@@ -812,3 +836,34 @@ class CombinacionTests(TestCase):
         segunda = self._preguntar("compara cuánta gente estuvo fuera este mes")
         self.assertFalse(segunda["meta"].get("desde_cache"))
         self.assertEqual(segunda["meta"]["intencion"], "modelo")
+
+
+@SIN_DOCUMENTOS
+class CortesiaTests(TestCase):
+    def setUp(self):
+        cache.clear()
+
+    def _preguntar(self, texto):
+        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
+                                content_type="application/json").json()
+
+    @override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba")
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_un_saludo_no_gasta_modelo_ni_buk(self, mock_cliente, mock_buk):
+        cuerpo = self._preguntar("Hola")
+        self.assertEqual(cuerpo["meta"]["intencion"], "cortesia")
+        self.assertEqual(cuerpo["meta"]["requests_buk"], 0)
+        mock_cliente.assert_not_called()
+        mock_buk.assert_not_called()
+
+    def test_devuelve_el_mismo_saludo(self):
+        self.assertTrue(self._preguntar("buenas tardes")["answer"].startswith("Buenas tardes"))
+        self.assertTrue(self._preguntar("buenos días")["answer"].startswith("Buenos días"))
+        self.assertTrue(self._preguntar("hola")["answer"].startswith("Hola"))
+
+    def test_no_se_registra_como_consulta_sin_responder(self):
+        from chat.models import ConsultaNoResuelta
+        for m in ("hola", "gracias", "chao", "¿quién eres?"):
+            self._preguntar(m)
+        self.assertEqual(ConsultaNoResuelta.objects.count(), 0)

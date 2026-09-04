@@ -147,6 +147,51 @@ def responder_ausencias(plan):
     }
 
 
+# Se devuelve el mismo saludo que uso la persona: responder "Hola" a un
+# "buenas tardes" suena a formulario, no a asistente.
+SALUDO_ESPEJO = (
+    ("buenas noches", "Buenas noches."),
+    ("buenas tardes", "Buenas tardes."),
+    ("buenos dias", "Buenos días."),
+    ("buen dia", "Buenos días."),
+)
+
+CORTESIA = {
+    "saludo": "Hola.",
+    "gracias": "De nada. Cualquier otra cosa que necesites, aquí estoy.",
+    "despedida": "Hasta luego.",
+    "identidad": (
+        "Soy azertin, el asistente interno de Azerta. Reúno la información "
+        "operacional de la empresa para que no tengas que ir a buscarla."
+    ),
+}
+
+QUE_PUEDO = (
+    "Puedo decirte quién está fuera de su jornada —vacaciones, licencias, "
+    "permisos o inasistencias—, revisar la situación de una persona en "
+    "particular y consultar las políticas internas."
+)
+
+
+def responder_cortesia(intencion, mensaje=""):
+    """Saludos y cortesías: instantáneo, sin BUK y sin gastar modelo."""
+    texto = CORTESIA[intencion]
+    if intencion == "saludo":
+        normalizado = intents.normalizar(mensaje)
+        for clave, saludo in SALUDO_ESPEJO:
+            if clave in normalizado:
+                texto = saludo
+                break
+        texto = f"{texto} ¿En qué te ayudo? {QUE_PUEDO}"
+    elif intencion == "identidad":
+        texto = f"{texto} {QUE_PUEDO}"
+    return {
+        "answer": texto,
+        "items": [],
+        "meta": {"intencion": "cortesia", "tipo": intencion, "requests_buk": 0},
+    }
+
+
 def responder_dotacion():
     personas_map, req = buk.directorio()
     return {
@@ -362,6 +407,8 @@ def _resolver(mensaje, hoy):
         return responder_ausencias(plan)
     if plan["intencion"] == "dotacion":
         return responder_dotacion()
+    if plan["intencion"] in CORTESIA:
+        return responder_cortesia(plan["intencion"], mensaje)
 
     # No se reconocio la intencion, pero puede nombrar a alguien: "y Duk?",
     # "cuando vuelve Javiera?". Se responde por esa persona, para hoy.

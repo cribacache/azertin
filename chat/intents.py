@@ -82,6 +82,45 @@ def es_procedimiento(mensaje):
     return any(p in texto for p in PALABRAS_PROCEDIMIENTO)
 
 
+# Cortesia y presentaciones. No necesitan datos ni modelo: gastarle una llamada
+# a Gemini para responder "Hola" cuesta cuota y segundos de espera, y si el
+# proveedor esta caido termina contestando "no tengo esa informacion" a un saludo.
+SALUDOS = ("hola", "holi", "buenas", "buen dia", "buenos dias", "buenas tardes",
+           "buenas noches", "hey", "que tal", "como estas", "como andas",
+           "como va", "que hay")
+
+AGRADECIMIENTOS = ("gracias", "muchas gracias", "te pasaste", "genial", "perfecto",
+                   "buenisimo", "excelente", "dale gracias")
+
+DESPEDIDAS = ("chao", "chau", "adios", "hasta luego", "nos vemos", "bye",
+              "hasta manana", "buen fin de semana")
+
+IDENTIDAD = ("quien eres", "que eres", "como te llamas", "que puedes hacer",
+             "que sabes hacer", "en que me puedes ayudar", "para que sirves",
+             "que haces", "en que ayudas", "ayuda")
+
+
+def _coincide(texto, frases):
+    """Coincidencia por palabra completa, para que "ayuda" no capture
+    "ayudame con las vacaciones de octubre"."""
+    palabras = " " + " ".join(
+        "".join(c if c.isalnum() else " " for c in texto).split()
+    ) + " "
+    return any(f" {f} " in palabras for f in frases)
+
+
+def detectar_cortesia(texto):
+    if _coincide(texto, SALUDOS):
+        return "saludo"
+    if _coincide(texto, AGRADECIMIENTOS):
+        return "gracias"
+    if _coincide(texto, DESPEDIDAS):
+        return "despedida"
+    if _coincide(texto, IDENTIDAD):
+        return "identidad"
+    return None
+
+
 PALABRAS_DOTACION = ("cuantas personas", "cuantos empleados", "dotacion", "headcount", "nomina")
 
 
@@ -197,5 +236,9 @@ def interpretar(mensaje, hoy=None):
             "hasta": hasta,
             "etiqueta": etiqueta,
         }
+
+    cortesia = detectar_cortesia(texto)
+    if cortesia:
+        return {"intencion": cortesia}
 
     return {"intencion": "ayuda"}

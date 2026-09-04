@@ -235,11 +235,20 @@ herramientas; si no, sería un atajo que la burla.
 
 ### Orden de resolución
 
-1. Router de reglas — instantáneo, sin tokens. Cubre las preguntas frecuentes.
-2. Persona nombrada en la pregunta.
-3. Documentos de `datos/`.
-4. Modelo de lenguaje.
-5. "No cuento con esa información" + registro en `manage.py consultas`.
+1. Cortesía (saludos, gracias, despedidas, "¿quién eres?") — instantáneo, sin
+   BUK y sin modelo. Un saludo no necesita datos: gastarle una llamada al
+   proveedor cuesta cuota y segundos, y si está caído termina respondiendo
+   "no tengo esa información" a un "Hola".
+2. Router de reglas — instantáneo, sin tokens. Cubre las preguntas frecuentes.
+3. Persona nombrada en la pregunta.
+4. Documentos de `datos/`.
+5. Modelo de lenguaje.
+6. Respaldo de las reglas si el modelo falla; si tampoco hay, "todavía no tengo
+   esa información" + registro en `manage.py consultas`.
+
+La cortesía se evalúa **al final** del router, no al principio: así "hola,
+¿quién está fuera hoy?" se responde como la consulta que es, y no como un
+saludo.
 
 Como el modelo es el último recurso, solo paga tokens la cola larga. Si falla o
 se cae la API, la aplicación responde igual con el paso 5.
