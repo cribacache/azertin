@@ -59,6 +59,10 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
 ]
 
+# Hasta cuantas personas se listan por nombre en una respuesta. Mas que esto
+# satura el chat y basta el numero.
+LISTAR_HASTA = int(os.getenv("LISTAR_HASTA", "25"))
+
 # Cuanto dura una desambiguacion pendiente ("¿cual de las cuatro Javi?").
 # Corta a proposito: si el usuario cambia de tema, la siguiente pregunta no
 # debe interpretarse como respuesta a algo que ya olvido.

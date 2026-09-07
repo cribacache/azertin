@@ -250,10 +250,35 @@ Los días que faltan se cuentan **desde hoy**, no desde el inicio del rango: al
 preguntar por "este mes" el día 7, uno del día 6 se marca "ya pasó" en vez de
 "en 5 días".
 
-## Quién sí está trabajando
+## Quién sí está disponible
 
-`¿quién está trabajando hoy?`, `¿está todo el equipo?`. Es la nómina menos los
-ausentes, y acepta filtro por área.
+`¿quién está trabajando hoy?`, `¿está todo el equipo?`, `¿qué ejecutivos están
+disponibles?`. Es la nómina menos los ausentes.
+
+Acepta tres filtros combinables: **cuenta** (`de CENCOSUD`), **área** (`en
+prensa`) y **familia de cargo** (`qué ejecutivos`, `los directores`). Las
+familias vienen de `current_job.role.role_family`: Ejecutivos (23), Consultores
+Senior (19), Consultores (14), Directores (13), Socios Directores (8),
+Administrativos, Directores Senior, Gerentes, Socios Fundadores.
+
+```
+que ejecutivos estan disponibles hoy de cencosud
+→ Están los 4 ejecutivos de CENCOSUD en su jornada hoy.
+  + los cuatro nombres
+```
+
+Cuando hay filtro y el grupo cabe en `LISTAR_HASTA` (25) se listan los nombres:
+preguntar "qué ejecutivos" y recibir solo un número no responde la pregunta.
+
+**Ojo con `disponible`.** Estuvo en la lista de palabras de ausencia, que
+significa lo contrario, y `que ejecutivos estan disponibles` contestaba quiénes
+estaban fuera. Si se agregan sinónimos conviene revisar de qué lado quedan.
+
+**Las cuentas por persona y tipo.** Los listados muestran una fila por persona y
+tipo de ausencia, no una por registro: quien parte sus vacaciones en tres tramos
+aparecía tres veces y el total decía "6 personas" cuando eran 4. Se agrupa por
+(persona, tipo) y no solo por persona, porque alguien puede tener vacaciones y
+licencia a la vez.
 
 ## Apodos
 

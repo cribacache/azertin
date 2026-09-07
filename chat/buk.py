@@ -44,7 +44,7 @@ MEDIA_JORNADA = ("start_working_day", "end_working_day")
 
 # Del cumpleanos solo se guarda "MM-DD". El anio revela la edad, que no hace
 # falta para saludar a nadie y es un dato sensible: no cruza esta capa.
-CAMPOS_PUBLICOS_DOC = ("id", "nombre", "apodo", "cargo", "area", "cumple")
+CAMPOS_PUBLICOS_DOC = ("id", "nombre", "apodo", "cargo", "familia", "area", "cumple")
 
 # Campos que pueden salir del backend. El endpoint de empleados expone rut,
 # direccion, cuenta bancaria, salud y prevision; nada de eso cruza esta capa.
@@ -176,6 +176,19 @@ def areas(forzar=False):
     return mapa, hechos
 
 
+def _familia(empleado):
+    """Familia del cargo: Ejecutivos, Consultores, Directores, Gerentes...
+
+    Sirve para preguntas como "que ejecutivos estan disponibles", que el cargo
+    individual no resuelve porque hay uno distinto por area.
+    """
+    rol = ((empleado.get("current_job") or {}).get("role")) or {}
+    if not isinstance(rol, dict):
+        return ""
+    familia = rol.get("role_family") or {}
+    return (familia.get("name") or "").strip() if isinstance(familia, dict) else ""
+
+
 def _cargo(empleado):
     rol = ((empleado.get("current_job") or {}).get("role")) or {}
     if isinstance(rol, dict):
@@ -186,7 +199,7 @@ def _cargo(empleado):
 def directorio(forzar=False):
     """Mapa {id: {id, nombre, cargo, area, cumple}} de activos, cacheado."""
     if not forzar:
-        cacheado = cache.get("buk:directorio:v3")
+        cacheado = cache.get("buk:directorio:v4")
         if cacheado is not None:
             return cacheado, 0
 
@@ -210,6 +223,7 @@ def directorio(forzar=False):
             # como se muestra al usuario: Maria "Mane" Jose Pena Gutierrez
             "nombre_completo": nombre_con_apodo(nombre, apodo),
             "cargo": _cargo(emp),
+            "familia": _familia(emp),
             "area": nombres_area.get(area_id, ""),
             "cumple": _cumple(emp),
             # el rut solo sirve para cruzar con el Excel de cuentas; se descarta
@@ -219,7 +233,7 @@ def directorio(forzar=False):
     from . import cuentas
     cuentas.asignar(mapa)
 
-    cache.set("buk:directorio:v3", mapa, settings.BUK_CACHE_TTL)
+    cache.set("buk:directorio:v4", mapa, settings.BUK_CACHE_TTL)
     return mapa, hechos
 
 

@@ -91,6 +91,37 @@ def responder_persona(plan, ids, personas_map):
     }
 
 
+def _familias(personas_map):
+    return {p["familia"] for p in personas_map.values() if p.get("familia")}
+
+
+def _filtrar_familia(gente, familia):
+    return [p for p in gente if (p.get("familia") or "") == familia]
+
+
+def _agrupar_por_persona(items):
+    """Una fila por persona y tipo de ausencia.
+
+    Quien parte sus vacaciones en tres tramos aparecia tres veces seguidas. Se
+    agrupa por (persona, tipo) y no solo por persona: alguien puede tener
+    vacaciones y licencia a la vez, y fusionarlas perderia una de las dos.
+    """
+    por_persona = {}
+    for item in items:
+        por_persona.setdefault((item["id"], item["tipo"]), []).append(item)
+
+    salida = []
+    for tramos in por_persona.values():
+        tramos.sort(key=lambda i: i["desde"] or "")
+        primero = dict(tramos[0])
+        if len(tramos) > 1:
+            primero["detalle"] = " · ".join(
+                x for x in (primero.get("detalle"), f"+{len(tramos) - 1} tramos") if x)
+        salida.append(primero)
+    salida.sort(key=lambda i: (i["desde"] or "", i["nombre"]))
+    return salida
+
+
 def _filtrar_area(items, area):
     if not area:
         return items
@@ -232,29 +263,42 @@ def responder_ausencias(plan):
         items = _filtrar_area(items, area)
         etiqueta = f"{etiqueta} en {area}"
 
+    familia = intents.detectar_familia(intents.normalizar(plan["mensaje"]),
+                                       _familias(personas_map))
+    if familia:
+        ids_fam = {p["id"] for p in personas_map.values() if p.get("familia") == familia}
+        items = [i for i in items if i["id"] in ids_fam]
+        etiqueta = f"{etiqueta}, {familia.lower()}"
+
     if categoria:
         nombre = buk.CATEGORIAS[categoria]["etiqueta"]
         if subtipo:
             nombre = buk.TIPOS_VACACION_PLURAL.get(subtipo, nombre)
+        # se cuentan PERSONAS y no registros: quien parte sus vacaciones en
+        # tres tramos aparece tres veces en la lista, pero es una sola persona
+        distintas = len({i["id"] for i in items})
         if not items:
             texto = f"No hay nadie con {nombre} {etiqueta}."
-        elif len(items) == 1:
+        elif distintas == 1:
             i = items[0]
             texto = (f"Hay 1 persona con {nombre} {etiqueta}: {i['nombre']}, "
                      f"del {i['desde']} al {i['hasta']}.")
         else:
-            texto = f"Hay {len(items)} personas con {nombre} {etiqueta}. Te las dejo abajo."
+            texto = f"Hay {distintas} personas con {nombre} {etiqueta}. Te las dejo abajo."
     elif not items:
         texto = f"El equipo está completo {etiqueta}: nadie registra ausencias."
     else:
-        resumen = Counter(i["tipo"] for i in items)
+        distintas = len({i["id"] for i in items})
+        resumen = Counter()
+        for tipo in {(i["id"], i["tipo"]) for i in items}:
+            resumen[tipo[1]] += 1
         detalle = ", ".join(f"{n} con {t}" for t, n in resumen.most_common())
-        plural = "persona" if len(items) == 1 else "personas"
-        texto = f"Hay {len(items)} {plural} fuera de su jornada {etiqueta}: {detalle}."
+        plural = "persona" if distintas == 1 else "personas"
+        texto = f"Hay {distintas} {plural} fuera de su jornada {etiqueta}: {detalle}."
 
     return {
         "answer": texto,
-        "items": items,
+        "items": _agrupar_por_persona(items),
         "meta": {
             "intencion": "ausencias",
             "categoria": categoria or "todas",
@@ -383,7 +427,7 @@ def _item_cumple(persona):
 
 
 def responder_trabajando(plan):
-    """Quien SI esta en su jornada: la nomina menos los ausentes."""
+    """Quien SI esta en su jornada, con filtro por cuenta, area o cargo."""
     desde, hasta = plan["desde"], plan["hasta"]
     personas_map, req_dir = buk.directorio()
     aviso = _grupo_no_disponible(plan["mensaje"], personas_map, req_dir)
@@ -391,35 +435,61 @@ def responder_trabajando(plan):
         return aviso
     registros, req = buk.fuera(desde, hasta)
 
-    area = intents.detectar_area(intents.normalizar(plan["mensaje"]),
-                                 {p["area"] for p in personas_map.values() if p.get("area")})
     equipo = list(personas_map.values())
+    texto_plano = intents.normalizar(plan["mensaje"])
+    donde = []
+
     cuenta = cuentas.buscar(plan["mensaje"])
     if cuenta and "ambiguas" in cuenta:
         return responder_cuenta_ambigua(cuenta["ambiguas"], plan["mensaje"])
     if cuenta:
         equipo = _filtrar_cuenta(equipo, cuenta["nombre"])
-        plan = {**plan, "etiqueta": f"{plan['etiqueta']} en {cuenta['nombre']}"}
-    elif area:
-        equipo = _filtrar_area(equipo, area)
-        plan = {**plan, "etiqueta": f"{plan['etiqueta']} en {area}"}
+        donde.append(f"de {cuenta['nombre']}")
+    else:
+        area = intents.detectar_area(
+            texto_plano, {p["area"] for p in personas_map.values() if p.get("area")})
+        if area:
+            equipo = _filtrar_area(equipo, area)
+            donde.append(f"de {area}")
+
+    # "que ejecutivos estan disponibles" filtra ademas por familia de cargo
+    familia = intents.detectar_familia(texto_plano, _familias(personas_map))
+    quienes = familia.lower() if familia else "personas"
+    if familia:
+        equipo = _filtrar_familia(equipo, familia)
 
     fuera_ids = {r["employee_id"] for r in registros}
-    presentes = [p for p in equipo if p["id"] not in fuera_ids]
-    presentes.sort(key=lambda p: p["nombre"])
+    presentes = sorted((p for p in equipo if p["id"] not in fuera_ids),
+                       key=lambda p: p["nombre"])
+    total, ausentes = len(equipo), len(equipo) - len(presentes)
+    grupo = " ".join([quienes] + donde)
 
-    total = len(equipo)
-    ausentes = total - len(presentes)
-    if not ausentes:
-        texto = f"Está el equipo completo {plan['etiqueta']}: las {total} personas en su jornada."
+    if not total:
+        texto = f"No encontré {grupo} en la nómina."
+    elif not ausentes:
+        unidad = quienes if total > 1 else quienes.rstrip("es").rstrip("s")
+        texto = (f"Están {'los' if total > 1 else 'el'} {total} {unidad} "
+                 f"{' '.join(donde)} en su jornada {plan['etiqueta']}.".replace("  ", " "))
     else:
         verbo = "está" if ausentes == 1 else "están"
-        texto = (f"{len(presentes)} de {total} personas están en su jornada "
+        texto = (f"{len(presentes)} de {total} {grupo} están en su jornada "
                  f"{plan['etiqueta']}; {ausentes} {verbo} fuera.")
+
+    # Si el grupo es acotado se listan por nombre: preguntar "que ejecutivos
+    # estan disponibles" y recibir solo un numero no responde la pregunta.
+    items = []
+    if 0 < len(presentes) <= settings.LISTAR_HASTA and (familia or cuenta or donde):
+        items = [{
+            "id": p["id"],
+            "nombre": p.get("nombre_completo") or p["nombre"],
+            "cargo": " · ".join(x for x in (p.get("cargo"), p.get("area")) if x),
+            "tipo": "disponible", "detalle": "", "desde": None, "hasta": None,
+            "dias": None, "estado": "en su jornada", "media_jornada": False,
+        } for p in presentes]
 
     return {
         "answer": texto,
-        "items": [],
+        "items": items,
         "meta": {"intencion": "trabajando", "presentes": len(presentes),
                  "ausentes": ausentes, "requests_buk": req + req_dir},
     }

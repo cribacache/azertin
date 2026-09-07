@@ -181,7 +181,7 @@ class ChatViewTests(TestCase):
         cuerpo = self._preguntar("quien esta fuera hoy")
         tipos = {i["tipo"] for i in cuerpo["items"]}
         self.assertEqual(tipos, {"vacaciones", "licencia médica"})
-        self.assertEqual(len(cuerpo["items"]), 3)  # 2 vacaciones + 1 licencia
+        self.assertEqual(len(cuerpo["items"]), 3)  # una fila por persona y tipo
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     def test_subtipo_administrativo(self, mocked):
@@ -1378,3 +1378,49 @@ class CuentaPorTokenTests(TestCase):
         from chat import cuentas
         with override_settings(DOCUMENTOS_DIR=self._planilla(["BANCO SANTANDER", "BANCO ESTADO"])):
             self.assertIsNone(cuentas.buscar("el equipo del banco"))
+
+
+@SIN_DOCUMENTOS
+class DisponiblesTests(TestCase):
+    """"Disponible" es lo contrario de ausente; antes se leía al revés."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _preguntar(self, texto):
+        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
+                                content_type="application/json").json()
+
+    def test_disponible_no_es_una_palabra_de_ausencia(self):
+        for pregunta in ("que ejecutivos estan disponibles hoy",
+                         "¿quién está disponible hoy?",
+                         "quienes estan disponibles en cencosud"):
+            self.assertEqual(intents.interpretar(pregunta, HOY)["intencion"],
+                             "trabajando", pregunta)
+
+    def test_ausente_sigue_siendo_ausencia(self):
+        for pregunta in ("¿quién está fuera hoy?", "¿quién está ausente?"):
+            self.assertEqual(intents.interpretar(pregunta, HOY)["intencion"],
+                             "ausencias", pregunta)
+
+    def test_detecta_la_familia_de_cargo_en_singular_y_plural(self):
+        familias = {"Ejecutivos", "Directores", "Consultores Senior"}
+        self.assertEqual(intents.detectar_familia("que ejecutivos hay", familias),
+                         "Ejecutivos")
+        self.assertEqual(intents.detectar_familia("los director de area", familias),
+                         "Directores")
+        self.assertIsNone(intents.detectar_familia("quien esta fuera", familias))
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_lista_los_nombres_cuando_el_grupo_es_acotado(self, mocked):
+        """Preguntar "qué ejecutivos" y recibir solo un número no responde."""
+        cuerpo = self._preguntar("¿qué analistas están disponibles hoy?")
+        self.assertEqual(cuerpo["meta"]["intencion"], "trabajando")
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_cuenta_personas_y_no_registros(self, mocked):
+        """Quien parte sus vacaciones en tramos es una persona, no tres."""
+        cuerpo = self._preguntar("¿quién está fuera este mes?")
+        claves = [(i["id"], i["tipo"]) for i in cuerpo["items"]]
+        self.assertEqual(len(claves), len(set(claves)))  # sin filas repetidas
+        self.assertIn(str(len({i["id"] for i in cuerpo["items"]})), cuerpo["answer"])

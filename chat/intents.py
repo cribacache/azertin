@@ -27,7 +27,7 @@ CATEGORIA_POR_PALABRA = (
 PALABRAS_AUSENCIA = (
     "ausencia", "ausencias", "ausente", "ausentes", "fuera", "no esta",
     "no estan", "quien falta", "descanso", "jornada", "no viene", "no vienen",
-    "no vino", "no vinieron", "no puedo contar", "disponible", "disponibles",
+    "no vino", "no vinieron", "no puedo contar",
 )
 
 # Marcas de que se pregunta por un procedimiento, no por quien esta fuera.
@@ -128,7 +128,7 @@ PALABRAS_TRABAJANDO = ("quien esta trabajando", "quienes estan trabajando",
                        "quien trabaja hoy", "esta todo el equipo",
                        "esta completo el equipo", "quien si esta",
                        "quienes si estan", "con quien si puedo contar",
-                       "quien esta disponible", "quienes estan disponibles",
+                       "disponible", "disponibles",
                        "quien vino", "quienes vinieron")
 
 PALABRAS_DOTACION = ("cuantas personas", "cuantos empleados", "dotacion", "headcount", "nomina")
@@ -253,6 +253,23 @@ def detectar_grupo_desconocido(texto, nombres_area):
         return None
     # se normaliza a minusculas para comparar, pero se devuelve presentable
     return grupo.title()
+
+
+# Singular -> familia tal como viene de BUK. La gente pregunta "que ejecutivos"
+# o "los directores", no "Ejecutivos" con mayuscula.
+def detectar_familia(texto, familias):
+    """Familia de cargo mencionada en la pregunta, si la hay."""
+    mejor = None
+    for familia in familias:
+        clave = normalizar(familia)
+        # se prueba tambien el singular: "director" encuentra "Directores"
+        variantes = {clave, clave.rstrip("es"), clave.rstrip("s")}
+        for variante in variantes:
+            if len(variante) >= 5 and variante in texto:
+                if mejor is None or len(normalizar(familia)) > len(normalizar(mejor)):
+                    mejor = familia
+                break
+    return mejor
 
 
 def detectar_cumple(texto):
