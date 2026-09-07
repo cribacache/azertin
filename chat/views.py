@@ -688,6 +688,11 @@ def chat_page(request):
 
 @require_GET
 def api_status(request):
+    # Lo llama la pagina al cargar: recargar empieza una conversacion limpia,
+    # sin quedar enganchado al ultimo cliente consultado.
+    request.session.pop("grupo", None)
+    request.session.pop("pendiente", None)
+
     try:
         personas_map, _ = buk.directorio()
     except buk.BukError as error:
@@ -716,14 +721,42 @@ def _grupo_mencionado(mensaje, personas_map):
     return {"tipo": "area", "nombre": area} if area else None
 
 
+# Palabras con las que el usuario sale explicitamente de un equipo.
+SALIR_DEL_GRUPO = ("en general", "en total", "de todos", "todos", "todas",
+                   "toda la empresa", "de la empresa", "en la empresa",
+                   "en toda", "global", "completo", "cualquiera")
+
+# Pronombres que abren una pregunta nueva y completa.
+PREGUNTA_PROPIA = ("quien", "quienes", "cuanto", "cuanta", "cuantos", "cuantas",
+                   "cual", "cuales", "que ", "donde", "cuando")
+
+MAX_PALABRAS_CONTINUACION = 5
+
+
+def _es_continuacion(mensaje):
+    """True si el mensaje solo se entiende con la pregunta anterior.
+
+    "estan disponibles" no dice de quien, asi que hereda. "necesito saber quien
+    esta de vacaciones" es una pregunta completa: heredar ahi es justamente lo
+    que hacia que la conversacion se quedara pegada a un cliente.
+    """
+    texto = intents.normalizar(mensaje).strip()
+    if any(p in texto for p in SALIR_DEL_GRUPO):
+        return False
+    if any(p in f"{texto} " for p in PREGUNTA_PROPIA):
+        return False
+    return 0 < len(texto.split()) <= MAX_PALABRAS_CONTINUACION
+
+
 def _heredar_grupo(mensaje, contexto, personas_map):
     """Agrega al mensaje el equipo del que se venia hablando.
 
-    "¿quienes estan en el equipo de Cencosud?" y luego "estan disponible" es una
-    sola conversacion. Solo se hereda si el mensaje nuevo no nombra otro grupo,
-    para no arrastrar un filtro que el usuario ya cambio.
+    Solo para fragmentos que no se entienden solos, y nunca si el mensaje
+    nombra otro grupo o pide explicitamente todo.
     """
-    if not contexto or _grupo_mencionado(mensaje, personas_map):
+    if not contexto or not _es_continuacion(mensaje):
+        return mensaje, None
+    if _grupo_mencionado(mensaje, personas_map):
         return mensaje, None
     return f"{mensaje} en {contexto['nombre']}", contexto
 
@@ -829,7 +862,9 @@ def chat_message(request):
     # depende de lo que conteste el usuario, no solo del texto.
     # Se recuerda el equipo nombrado, pero solo cuando la respuesta fue sobre
     # personas: un saludo o una politica no tienen por que consultar BUK.
-    if respuesta["meta"].get("intencion") in INTENCIONES_CON_GRUPO:
+    if any(p in intents.normalizar(mensaje) for p in SALIR_DEL_GRUPO):
+        request.session.pop("grupo", None)      # "en general" olvida el equipo
+    elif respuesta["meta"].get("intencion") in INTENCIONES_CON_GRUPO:
         try:
             personas_map, _ = buk.directorio()
             grupo = _grupo_mencionado(mensaje, personas_map)

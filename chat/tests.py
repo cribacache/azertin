@@ -1572,3 +1572,40 @@ class PertenenciaTests(TestCase):
             self._preguntar("¿quiénes están en el equipo de CENCOSUD?", cliente)
             segunda = self._preguntar("¿quién está disponible en BANCO SANTANDER?", cliente)
         self.assertIsNone(segunda["meta"].get("grupo_heredado"))
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_una_pregunta_completa_no_hereda(self, mocked):
+        """El bug: la conversación se quedaba pegada a un cliente."""
+        cliente = self.client
+        with override_settings(DOCUMENTOS_DIR=self._planilla()):
+            self._preguntar("¿quién está de vacaciones en CENCOSUD?", cliente)
+            segunda = self._preguntar("necesito saber quien esta de vacaciones", cliente)
+        self.assertIsNone(segunda["meta"].get("grupo_heredado"))
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_en_general_sale_del_equipo_y_lo_olvida(self, mocked):
+        cliente = self.client
+        with override_settings(DOCUMENTOS_DIR=self._planilla()):
+            self._preguntar("¿quién está de vacaciones en CENCOSUD?", cliente)
+            self._preguntar("quien esta de vacaciones en general", cliente)
+            tercera = self._preguntar("están disponibles", cliente)
+        self.assertIsNone(tercera["meta"].get("grupo_heredado"))
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_recargar_la_pagina_limpia_el_contexto(self, mocked):
+        cliente = self.client
+        with override_settings(DOCUMENTOS_DIR=self._planilla()):
+            self._preguntar("¿quiénes están en el equipo de CENCOSUD?", cliente)
+            cliente.get("/api/status/")          # lo llama la página al cargar
+            segunda = self._preguntar("están disponibles", cliente)
+        self.assertIsNone(segunda["meta"].get("grupo_heredado"))
+
+    def test_distingue_fragmento_de_pregunta_completa(self):
+        from chat.views import _es_continuacion
+        for fragmento in ("están disponibles", "y ahora?", "y mañana"):
+            self.assertTrue(_es_continuacion(fragmento), fragmento)
+        for completa in ("necesito saber quien esta de vacaciones",
+                         "quien esta de vacaciones en general",
+                         "cuantas personas hay activas",
+                         "todos"):
+            self.assertFalse(_es_continuacion(completa), completa)

@@ -277,10 +277,23 @@ usuario> están disponibles
 azertin> 19 de 20 personas de CENCOSUD están en su jornada hoy; 1 está fuera.
 ```
 
-Es una sola conversación. Solo se hereda si la pregunta nueva **no nombra otro
-equipo**, para no arrastrar un filtro que el usuario ya cambió, y dura lo mismo
-que una desambiguación (180 s). La respuesta menciona el equipo heredado para
-que la suposición quede a la vista.
+Es una sola conversación, pero heredar es peligroso: la primera versión heredaba
+siempre que la pregunta nueva no nombrara otro equipo, y la conversación se
+quedaba pegada a un cliente — `necesito saber quien esta de vacaciones`
+respondía por CENCOSUD.
+
+Ahora **solo se hereda en fragmentos que no se entienden solos**: cinco palabras
+o menos y sin pronombre interrogativo. Una pregunta con `quién`, `cuántos` o
+`cuál` abre su propio alcance y nunca hereda.
+
+Tres formas de salir del equipo:
+
+- Nombrar otro (`¿y en prensa?`).
+- Decirlo (`en general`, `de toda la empresa`, `todos`), que además lo olvida.
+- Recargar la página: `/api/status/` limpia el contexto al cargar.
+
+La respuesta menciona el equipo heredado para que la suposición quede a la
+vista, y el contexto expira a los 180 s.
 
 ## Quién sí está disponible
 
