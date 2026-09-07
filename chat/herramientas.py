@@ -82,6 +82,36 @@ def ausencias_de_persona(nombre, desde=None, hasta=None):
     }
 
 
+def info_persona(nombre):
+    """Quien es una persona: cargo, area y cuentas/clientes que atiende.
+
+    Cubre "quien es X", "que cuentas maneja X", "que clientes maneja X": son
+    la misma pregunta con otras palabras, y el modelo decide cuando usarla en
+    vez de tener que programar cada forma de decirla.
+    """
+    directorio, _ = buk.directorio()
+    ids, _ = personas.buscar(nombre or "", directorio)
+
+    if not ids:
+        return {"encontrada": False, "motivo": "No hay nadie con ese nombre en la nomina activa."}
+    if len(ids) > 1:
+        return {
+            "encontrada": False,
+            "motivo": "El nombre coincide con varias personas.",
+            "candidatos": sorted(directorio[i]["nombre"] for i in ids)[:8],
+        }
+
+    pid = next(iter(ids))
+    persona = directorio[pid]
+    return {
+        "encontrada": True,
+        "nombre": persona["nombre"],
+        "cargo": persona.get("cargo") or "",
+        "area": persona.get("area") or "",
+        "cuentas": persona.get("cuentas") or [],
+    }
+
+
 def cumpleanos(desde=None, dias=0):
     """Quien cumple anos en un rango. Solo dia y mes: el anio no se expone."""
     d = _fecha(desde)
@@ -118,6 +148,7 @@ def buscar_politica(consulta):
 FUNCIONES = {
     "listar_ausencias": listar_ausencias,
     "ausencias_de_persona": ausencias_de_persona,
+    "info_persona": info_persona,
     "cumpleanos": cumpleanos,
     "dotacion": dotacion,
     "buscar_politica": buscar_politica,
@@ -165,6 +196,23 @@ ESQUEMAS = [
                     "desde": _FECHA,
                     "hasta": _FECHA,
                 },
+                "required": ["nombre"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "info_persona",
+            "description": (
+                "Quien es una persona: su cargo, area y las cuentas o clientes "
+                "que atiende. Usar para 'quien es X', 'que cuentas/clientes "
+                "maneja X' o 'a que cuenta pertenece X'. No trae ausencias ni "
+                "disponibilidad, solo identidad y asignacion."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"nombre": {"type": "string"}},
                 "required": ["nombre"],
             },
         },

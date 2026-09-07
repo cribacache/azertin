@@ -637,12 +637,12 @@ def contexto_de_reglas(mensaje, hoy):
     }
 
 
-def responder_con_modelo(mensaje, contexto=None):
+def responder_con_modelo(mensaje, contexto=None, historial=None, alias=None):
     """Respaldo con modelo de lenguaje. None si no hay clave o si no resolvio."""
     if not asistente.disponible():
         return None
     try:
-        texto, meta = asistente.responder(mensaje, date.today(), contexto)
+        texto, meta = asistente.responder(mensaje, date.today(), contexto, historial, alias)
     except asistente.SinConfigurar:
         return None
     except Exception as error:  # el modelo no puede tumbar la aplicacion
@@ -660,11 +660,15 @@ def responder_con_modelo(mensaje, contexto=None):
         "meta": {
             "intencion": "modelo",
             "con_contexto": bool(contexto),
-            "modelo": settings.OPENAI_MODEL,
+            "modelo": asistente.modelo(),
             "pasos": meta.get("pasos"),
             "herramientas": [h["nombre"] for h in meta.get("herramientas", [])],
             "requests_buk": 0,
         },
+        # No van al navegador (_sin_privados los descarta): es la memoria que
+        # chat_message guarda en la sesion para el proximo mensaje.
+        "_historial": meta.get("historial"),
+        "_alias": meta.get("alias"),
     }
 
 
@@ -692,6 +696,8 @@ def api_status(request):
     # sin quedar enganchado al ultimo cliente consultado.
     request.session.pop("grupo", None)
     request.session.pop("pendiente", None)
+    request.session.pop("historial_modelo", None)
+    request.session.pop("alias_modelo", None)
 
     try:
         personas_map, _ = buk.directorio()
@@ -852,10 +858,21 @@ def chat_message(request):
         contar(mensaje, cacheada["meta"].get("intencion"), desde_cache=True)
         return JsonResponse(cacheada)
 
+    historial_modelo = request.session.get("historial_modelo")
+    alias_modelo = request.session.get("alias_modelo")
     try:
-        respuesta = _resolver(mensaje, hoy)
+        respuesta = _resolver(mensaje, hoy, historial_modelo, alias_modelo)
     except buk.BukError as error:
         return JsonResponse({"error": str(error)}, status=502)
+
+    # Memoria de la conversacion: solo se guarda si el modelo respondio.
+    # "en sesion" a proposito: se olvida sola al cerrar el navegador, nada
+    # se guarda a largo plazo por ahora.
+    nuevo_historial = respuesta.pop("_historial", None)
+    nuevo_alias = respuesta.pop("_alias", None)
+    if nuevo_historial is not None:
+        request.session["historial_modelo"] = nuevo_historial
+        request.session["alias_modelo"] = nuevo_alias or {}
 
     respuesta["meta"]["desde_cache"] = False
     # Una pregunta que quedo esperando aclaracion no se cachea: la respuesta
@@ -954,11 +971,11 @@ def responder_quiso_decir(pid, personas_map, mensaje, req):
     }
 
 
-def _resolver(mensaje, hoy):
+def _resolver(mensaje, hoy, historial=None, alias=None):
     """Decide quien responde. El orden va de lo barato a lo caro."""
     # Modo "todo por el modelo": mejor criterio, mas costo por pregunta.
     if settings.ASISTENTE_SIEMPRE and asistente.disponible():
-        del_modelo = responder_con_modelo(mensaje)
+        del_modelo = responder_con_modelo(mensaje, historial=historial, alias=alias)
         if del_modelo:
             return del_modelo
 
@@ -989,7 +1006,7 @@ def _resolver(mensaje, hoy):
         except buk.BukError:
             respaldo = None
 
-        del_modelo = responder_con_modelo(mensaje, contexto)
+        del_modelo = responder_con_modelo(mensaje, contexto, historial, alias)
         if del_modelo:
             return del_modelo
         if respaldo:
@@ -1047,7 +1064,7 @@ def _resolver(mensaje, hoy):
         return responder_documento(seccion)
 
     contexto = contexto_de_reglas(mensaje, hoy) if asistente.disponible() else None
-    del_modelo = responder_con_modelo(mensaje, contexto)
+    del_modelo = responder_con_modelo(mensaje, contexto, historial, alias)
     if del_modelo:
         return del_modelo
 

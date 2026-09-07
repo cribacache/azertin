@@ -43,7 +43,15 @@ Reglas:
 - Si el mensaje trae un bloque DATOS YA CONSULTADOS, usalo directamente en vez
   de volver a pedir lo mismo con una herramienta. Llama a una herramienta solo
   si necesitas algo que no este ahi.
+- "Quien es X", "que cuentas maneja X" y "que clientes maneja X" son la misma
+  pregunta: usa `info_persona`, no `ausencias_de_persona`.
+- Tienes el historial de esta conversacion. Usalo para entender preguntas de
+  seguimiento ("y sus vacaciones?", "y el segundo?") sin pedir que repitan el
+  nombre.
 """
+
+MAX_TURNOS_HISTORIAL = 6  # 3 idas y vueltas: alcanza para el seguimiento sin
+                          # inflar cada llamada con toda la conversacion.
 
 
 def _con_contexto(mensaje, contexto, alias):
@@ -199,7 +207,7 @@ def _declaraciones_gemini():
     return [types.Tool(function_declarations=funciones)]
 
 
-def _responder_gemini(mensaje, hoy, contexto=None):
+def _responder_gemini(mensaje, hoy, contexto=None, historial_previo=None, alias=None):
     from google.genai import types
 
     cliente = _cliente_gemini()
@@ -212,10 +220,20 @@ def _responder_gemini(mensaje, hoy, contexto=None):
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
 
-    alias, llamadas, pasos = {}, [], 0
-    historial = [types.Content(
-        role="user",
-        parts=[types.Part.from_text(text=_con_contexto(mensaje, contexto, alias))])]
+    # El alias se reutiliza entre turnos: si no, la misma persona cambiaria de
+    # seudonimo a mitad de conversacion y el modelo perderia el hilo.
+    if alias is None:
+        alias = {}
+    llamadas, pasos = [], 0
+    # Solo texto final de turnos anteriores, no las llamadas a herramientas
+    # intermedias: alcanza para el seguimiento y evita cargar cada vez la
+    # firma de pensamiento de vueltas ya cerradas.
+    historial = [
+        types.Content(role=turno["role"], parts=[types.Part.from_text(text=turno["texto"])])
+        for turno in (historial_previo or [])
+    ]
+    mensaje_actual = _con_contexto(mensaje, contexto, alias)
+    historial.append(types.Content(role="user", parts=[types.Part.from_text(text=mensaje_actual)]))
 
     while pasos < settings.ASISTENTE_MAX_PASOS:
         pasos += 1
@@ -228,7 +246,13 @@ def _responder_gemini(mensaje, hoy, contexto=None):
             texto = (respuesta.text or "").strip()
             if settings.ASISTENTE_ANONIMIZAR:
                 texto = _restaurar(texto, alias)
-            return texto, {"pasos": pasos, "herramientas": llamadas}
+            nuevo_historial = (historial_previo or []) + [
+                {"role": "user", "texto": mensaje_actual},
+                {"role": "model", "texto": texto},
+            ]
+            meta = {"pasos": pasos, "herramientas": llamadas,
+                    "historial": nuevo_historial[-MAX_TURNOS_HISTORIAL:], "alias": alias}
+            return texto, meta
 
         # Se devuelve el contenido original del modelo, sin reconstruirlo: los
         # modelos Gemini 3.x firman cada functionCall con un `thought_signature`
@@ -251,7 +275,8 @@ def _responder_gemini(mensaje, hoy, contexto=None):
             )
         historial.append(types.Content(role="user", parts=respuestas_tool))
 
-    return None, {"pasos": pasos, "herramientas": llamadas, "agotado": True}
+    return None, {"pasos": pasos, "herramientas": llamadas, "agotado": True,
+                  "historial": historial_previo or [], "alias": alias}
 
 
 # --------------------------------------------------------------------------
@@ -305,11 +330,13 @@ def _responder_openai(mensaje, hoy, contexto=None):
     return None, {"pasos": pasos, "herramientas": llamadas, "agotado": True}
 
 
-def responder(mensaje, hoy, contexto=None):
+def responder(mensaje, hoy, contexto=None, historial=None, alias=None):
     """Devuelve (texto, meta). Lanza SinConfigurar o el error del proveedor.
 
     `contexto` es lo que las reglas ya consultaron: entregarselo evita que el
     modelo gaste un viaje extra pidiendo datos que ya tenemos.
+    `historial` y `alias` son la memoria de la conversacion (ver `views.py`);
+    solo Gemini los usa por ahora, OpenAI queda como respaldo sin memoria.
     """
     if not clave():
         raise SinConfigurar(
@@ -318,7 +345,7 @@ def responder(mensaje, hoy, contexto=None):
         )
     try:
         if proveedor() == "gemini":
-            resultado = _responder_gemini(mensaje, hoy, contexto)
+            resultado = _responder_gemini(mensaje, hoy, contexto, historial, alias)
         else:
             resultado = _responder_openai(mensaje, hoy, contexto)
     except Exception:

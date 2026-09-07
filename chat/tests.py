@@ -432,7 +432,8 @@ class AsistenteTests(TestCase):
         ).json()
         self.assertEqual(cuerpo["meta"]["intencion"], "sin_datos")
 
-    @override_settings(ASISTENTE_PROVEEDOR="openai", OPENAI_API_KEY="sk-prueba")
+    @override_settings(ASISTENTE_PROVEEDOR="openai", OPENAI_API_KEY="sk-prueba",
+                       ASISTENTE_SIEMPRE=False)
     @patch("chat.buk.requests.get", side_effect=fake_get)
     @patch("chat.asistente._cliente_openai")
     def test_las_reglas_responden_sin_llamar_al_modelo(self, mock_cliente, mock_buk):
@@ -556,7 +557,7 @@ def _respuesta_gemini(texto=None, llamadas=None, contenido=None):
 
 @SIN_DOCUMENTOS
 @override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba",
-                   ASISTENTE_ANONIMIZAR=False)
+                   ASISTENTE_ANONIMIZAR=False, ASISTENTE_SIEMPRE=False)
 class GeminiTests(TestCase):
     """El SDK se simula: la suite no consume cuota gratuita."""
 
@@ -766,7 +767,7 @@ class GeminiFirmaTests(TestCase):
 
 @SIN_DOCUMENTOS
 @override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba",
-                   ASISTENTE_ANONIMIZAR=False)
+                   ASISTENTE_ANONIMIZAR=False, ASISTENTE_SIEMPRE=False)
 class CombinacionTests(TestCase):
     """Reglas y modelo trabajando juntos: uno cubre al otro."""
 
@@ -867,7 +868,8 @@ class CortesiaTests(TestCase):
         return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
                                 content_type="application/json").json()
 
-    @override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba")
+    @override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba",
+                       ASISTENTE_SIEMPRE=False)
     @patch("chat.buk.requests.get", side_effect=fake_get)
     @patch("chat.asistente._cliente_gemini")
     def test_un_saludo_no_gasta_modelo_ni_buk(self, mock_cliente, mock_buk):
@@ -1609,3 +1611,67 @@ class PertenenciaTests(TestCase):
                          "cuantas personas hay activas",
                          "todos"):
             self.assertFalse(_es_continuacion(completa), completa)
+
+
+class InfoPersonaTests(TestCase):
+    """`info_persona`: la herramienta que cubre "quien es X" / "que cuentas
+    maneja X" con una sola llamada, en vez de una por cada forma de decirlo.
+    """
+
+    def setUp(self):
+        cache.clear()
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_devuelve_identidad_y_no_ausencias(self, mocked):
+        from chat import herramientas
+        resultado = herramientas.info_persona("Ana Rojas")
+        self.assertTrue(resultado["encontrada"])
+        self.assertEqual(resultado["nombre"], "Ana Rojas")
+        self.assertIn("cargo", resultado)
+        self.assertIn("cuentas", resultado)
+        self.assertNotIn("ausencias", resultado)  # esa es otra herramienta
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_nombre_desconocido_no_encuentra(self, mocked):
+        from chat import herramientas
+        resultado = herramientas.info_persona("Nadie Existe")
+        self.assertFalse(resultado["encontrada"])
+
+
+@override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba",
+                   ASISTENTE_ANONIMIZAR=False)
+class MemoriaConversacionTests(TestCase):
+    """El modo "todo por el modelo" necesita acordarse de lo ya hablado para
+    entender un seguimiento como "y esta disponible hoy?"."""
+
+    @patch("chat.asistente._cliente_gemini")
+    def test_el_historial_previo_viaja_en_la_siguiente_llamada(self, mock_cliente):
+        from chat import asistente
+        generar = mock_cliente.return_value.models.generate_content
+        generar.return_value = _respuesta_gemini(texto="Si, esta en su jornada.")
+        historial_previo = [
+            {"role": "user", "texto": "quien es Ana Rojas?"},
+            {"role": "model", "texto": "Ana Rojas es Analista de Cencosud."},
+        ]
+
+        texto, meta = asistente.responder(
+            "y esta disponible hoy?", HOY, historial=historial_previo)
+
+        enviado = str(generar.call_args.kwargs["contents"])
+        self.assertIn("Ana Rojas es Analista de Cencosud", enviado)
+        self.assertEqual(meta["historial"][-2]["texto"], "y esta disponible hoy?")
+        self.assertEqual(meta["historial"][-1]["texto"], texto)
+
+    @patch("chat.asistente._cliente_gemini")
+    def test_el_alias_se_mantiene_entre_turnos(self, mock_cliente):
+        """Con anonimizacion activa, la misma persona no cambia de seudonimo
+        a mitad de conversacion."""
+        from chat import asistente
+        generar = mock_cliente.return_value.models.generate_content
+        generar.return_value = _respuesta_gemini(texto="Sigue igual.")
+        alias_previo = {"Ana Rojas": "Persona 1"}
+
+        with override_settings(ASISTENTE_ANONIMIZAR=True):
+            asistente.responder("y ahora?", HOY, alias=alias_previo)
+
+        self.assertEqual(alias_previo, {"Ana Rojas": "Persona 1"})
