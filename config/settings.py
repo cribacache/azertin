@@ -44,6 +44,13 @@ CSRF_TRUSTED_ORIGINS += [o.strip() for o in
                          os.getenv("DJANGO_CSRF_ORIGINS", "").split(",") if o.strip()]
 
 INSTALLED_APPS = [
+    # Los cuatro de abajo son solo para /admin/: ahi se trabaja el backlog de
+    # ConsultaNoResuelta (que pregunta quedo sin poder responderse) ordenado
+    # por cuantas veces se repitio, en vez de a mano por la shell.
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.messages",
     "django.contrib.sessions",   # recuerda una desambiguacion entre mensajes
     "django.contrib.staticfiles",
     "chat",
@@ -57,6 +64,8 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
 ]
 
 # Hasta cuantas personas se listan por nombre en una respuesta. Mas que esto
@@ -74,7 +83,12 @@ TEMPLATES = [
         "BACKEND": "django.template.backends.django.DjangoTemplates",
         "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
-        "OPTIONS": {"context_processors": []},
+        "OPTIONS": {"context_processors": [
+            # Los tres que pide el admin de Django para dibujar su interfaz.
+            "django.template.context_processors.request",
+            "django.contrib.auth.context_processors.auth",
+            "django.contrib.messages.context_processors.messages",
+        ]},
     },
 ]
 WSGI_APPLICATION = "config.wsgi.application"
