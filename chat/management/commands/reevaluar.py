@@ -7,6 +7,8 @@ respuesta en ningun documento, la pregunta sigue abierta y aparece en el
 listado, que es justamente la lista de que documentar.
 """
 
+from datetime import date
+
 from django.core.cache import cache
 from django.core.management.base import BaseCommand
 
@@ -35,28 +37,40 @@ class Command(BaseCommand):
             self.stdout.write("No hay consultas pendientes.")
             return
 
+        # Se prueba el sistema COMPLETO, no solo los documentos: varias
+        # pendientes hoy las resuelve una regla nueva (cumpleanos, quien esta
+        # trabajando, filtro por area) sin que exista documento alguno.
+        from chat import views
+
         cubiertas, sin_cubrir = [], []
         for fila in pendientes:
-            seccion = documentos.responder(fila.mensaje)
-            (cubiertas if seccion else sin_cubrir).append((fila, seccion))
+            try:
+                respuesta = views._resolver(fila.mensaje, date.today())
+            except Exception:
+                respuesta = None
+            intencion = (respuesta or {}).get("meta", {}).get("intencion", "")
+            if intencion and intencion not in ("sin_datos", "ayuda"):
+                cubiertas.append((fila, intencion,
+                                  (respuesta.get("answer") or "")[:60]))
+            else:
+                sin_cubrir.append((fila, "", ""))
 
         if cubiertas:
             self.stdout.write(self.style.SUCCESS(
                 f"\n{len(cubiertas)} consultas que los documentos YA responden:"))
-            for fila, seccion in cubiertas:
+            for fila, intencion, muestra in cubiertas:
                 self.stdout.write(
-                    f"  x{fila.veces:<3} {fila.mensaje[:52]:54} -> "
-                    f"{seccion['origen']} / {seccion['titulo'][:34]}")
+                    f"  x{fila.veces:<3} {fila.mensaje[:46]:48} [{intencion}] {muestra}")
 
         if sin_cubrir:
             self.stdout.write(self.style.WARNING(
                 f"\n{len(sin_cubrir)} siguen sin respuesta (esto es lo que falta documentar):"))
-            for fila, _ in sorted(sin_cubrir, key=lambda p: -p[0].veces):
+            for fila, _, _ in sorted(sin_cubrir, key=lambda p: -p[0].veces):
                 self.stdout.write(f"  x{fila.veces:<3} {fila.mensaje[:70]}")
 
         if opciones["aplicar"] and cubiertas:
             ConsultaNoResuelta.objects.filter(
-                pk__in=[f.pk for f, _ in cubiertas]
+                pk__in=[f.pk for f, _, _ in cubiertas]
             ).update(resuelta=True)
             self.stdout.write(self.style.SUCCESS(
                 f"\n{len(cubiertas)} marcadas como resueltas."))
@@ -80,7 +94,7 @@ class Command(BaseCommand):
             "inmediato, sin reiniciar.",
             "",
         ]
-        for fila, _ in sorted(sin_cubrir, key=lambda p: -p[0].veces):
+        for fila, _, _ in sorted(sin_cubrir, key=lambda p: -p[0].veces):
             lineas += [f"## {fila.mensaje.strip().rstrip('?')}",
                        "",
                        f"<!-- preguntada {fila.veces} vez/veces -->",

@@ -233,6 +233,43 @@ El modelo no reemplaza al router: se apoyan mutuamente.
 El contexto adelantado pasa por la misma anonimización que los resultados de las
 herramientas; si no, sería un atajo que la burla.
 
+## Cumpleaños
+
+`¿quién está de cumpleaños?`, `¿quién cumple años este mes?`, `cumpleaños en
+octubre`. Los 98 empleados activos tienen la fecha en BUK.
+
+**Del cumpleaños solo se guarda `MM-DD`.** El año revela la edad, no hace falta
+para saludar a nadie y es un dato sensible: se descarta en `chat/buk.py` y no
+cruza esa capa.
+
+Si nadie cumple en la fecha preguntada, muestra los próximos dentro de
+`CUMPLE_HORIZONTE_DIAS` (45). Responder "nadie" a secas no sirve; lo útil es
+saber a quién hay que saludar pronto.
+
+Los días que faltan se cuentan **desde hoy**, no desde el inicio del rango: al
+preguntar por "este mes" el día 7, uno del día 6 se marca "ya pasó" en vez de
+"en 5 días".
+
+## Quién sí está trabajando
+
+`¿quién está trabajando hoy?`, `¿está todo el equipo?`. Es la nómina menos los
+ausentes, y acepta filtro por área.
+
+## Filtro por área
+
+Las áreas salen de `/areas` y se cruzan con `current_job.area_id`:
+Comunicaciones (37), Asuntos Públicos (15), Prensa (10), Administración (8),
+Contenidos, Monitoreo, Diseño, Digital, Finanzas, IA, Operaciones, Personas,
+Paid Media, Audiovisual.
+
+Se detectan comparando con los nombres reales de BUK, no con una lista escrita a
+mano: si crean un área nueva funciona sin tocar código.
+
+**BUK no guarda la asignación por cliente** (`current_job.project` viene vacío).
+Ante `¿quién trabaja hoy en el equipo de Santander?` el asistente lo dice y
+ofrece las áreas disponibles, en vez de responder por toda la empresa ignorando
+el filtro — que es lo que hacía antes.
+
 ### Orden de resolución
 
 1. Cortesía (saludos, gracias, despedidas, "¿quién eres?") — instantáneo, sin

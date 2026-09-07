@@ -112,7 +112,7 @@ def _pedir(textos, tarea, reintentos=None):
 
 
 def indexar(secciones, forzar=False, progreso=None):
-    """Calcula y guarda el vector de cada seccion. Devuelve cuantos se pidieron.
+    """Calcula y guarda el vector de cada seccion. Devuelve (indexados, fallidos).
 
     Solo se piden los que no estan en el indice, asi que agregar un documento
     nuevo cuesta unicamente sus propios fragmentos.
@@ -157,7 +157,7 @@ def indexar(secciones, forzar=False, progreso=None):
                 progreso(pedidos, len(pendientes))
         if fallidos:
             logger.warning("%s fragmentos quedaron sin indexar", fallidos)
-        return pedidos
+        return pedidos, fallidos
 
 
 def vectores_de(secciones):

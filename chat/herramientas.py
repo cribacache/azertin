@@ -82,6 +82,19 @@ def ausencias_de_persona(nombre, desde=None, hasta=None):
     }
 
 
+def cumpleanos(desde=None, dias=0):
+    """Quien cumple anos en un rango. Solo dia y mes: el anio no se expone."""
+    d = _fecha(desde)
+    gente, _ = buk.cumpleanos(d, max(int(dias or 0), 0), hoy=date.today())
+    return {
+        "desde": d.isoformat(),
+        "total": len(gente),
+        "personas": [{"nombre": p["nombre"], "cargo": p["cargo"], "area": p["area"],
+                      "fecha": p["fecha"], "faltan_dias": p["faltan"]}
+                     for p in gente[:MAX_PERSONAS]],
+    }
+
+
 def dotacion():
     """Cuantas personas activas hay."""
     directorio, _ = buk.directorio()
@@ -105,6 +118,7 @@ def buscar_politica(consulta):
 FUNCIONES = {
     "listar_ausencias": listar_ausencias,
     "ausencias_de_persona": ausencias_de_persona,
+    "cumpleanos": cumpleanos,
     "dotacion": dotacion,
     "buscar_politica": buscar_politica,
 }
@@ -152,6 +166,25 @@ ESQUEMAS = [
                     "hasta": _FECHA,
                 },
                 "required": ["nombre"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cumpleanos",
+            "description": (
+                "Quien cumple anos. Con dias=0 es solo esa fecha; con dias=30 "
+                "cubre el mes siguiente. Devuelve dia y mes, nunca el anio de "
+                "nacimiento."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "desde": _FECHA,
+                    "dias": {"type": "integer",
+                             "description": "Cuantos dias hacia adelante incluir."},
+                },
             },
         },
     },

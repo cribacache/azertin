@@ -42,6 +42,7 @@ def armar_item(registro, personas_map):
         "id": registro["employee_id"],
         "nombre": persona.get("nombre") or f"Empleado #{registro['employee_id']}",
         "cargo": persona.get("cargo") or "",
+        "area": persona.get("area") or "",
         "tipo": cfg.get("etiqueta", registro["categoria"]),
         "detalle": registro.get("detalle") or "",
         "desde": registro["start_date"],
@@ -88,10 +89,41 @@ def responder_persona(plan, ids, personas_map):
     }
 
 
+def _filtrar_area(items, area):
+    if not area:
+        return items
+    clave = intents.normalizar(area)
+    return [i for i in items if clave in intents.normalizar(i.get("area") or i.get("cargo") or "")]
+
+
+def _grupo_no_disponible(mensaje, personas_map, req):
+    """Respuesta cuando se pregunta por un cliente o cuenta, que BUK no guarda."""
+    nombres = {p["area"] for p in personas_map.values() if p.get("area")}
+    grupo = intents.detectar_grupo_desconocido(intents.normalizar(mensaje), nombres)
+    if not grupo:
+        return None
+    registrar(mensaje, "sin_datos")
+    return {
+        "answer": (
+            f"No tengo la asignación por cliente o cuenta, así que no puedo "
+            f"filtrar por «{grupo}». BUK guarda el área, no el equipo comercial. "
+            f"Las áreas que sí puedo consultar son: "
+            f"{', '.join(sorted(nombres))}."
+        ),
+        "items": [],
+        "meta": {"intencion": "grupo_desconocido", "grupo": grupo, "requests_buk": req},
+    }
+
+
 def responder_ausencias(plan):
     categoria, etiqueta = plan.get("categoria"), plan["etiqueta"]
     subtipo = plan.get("subtipo")
     personas_map, req_dir = buk.directorio()
+    aviso = _grupo_no_disponible(plan["mensaje"], personas_map, req_dir)
+    if aviso:
+        return aviso
+    area = intents.detectar_area(intents.normalizar(plan["mensaje"]),
+                                 {p["area"] for p in personas_map.values() if p.get("area")})
 
     # Si la pregunta nombra a alguien, se responde por esa persona.
     ids, tokens = personas.buscar(plan["mensaje"], personas_map)
@@ -113,6 +145,9 @@ def responder_ausencias(plan):
     registros, req = buk.fuera(plan["desde"], plan["hasta"], categoria, subtipo)
     items = sorted((armar_item(r, personas_map) for r in registros),
                    key=lambda i: (i["desde"] or "", i["nombre"]))
+    if area:
+        items = _filtrar_area(items, area)
+        etiqueta = f"{etiqueta} en {area}"
 
     if categoria:
         nombre = buk.CATEGORIAS[categoria]["etiqueta"]
@@ -189,6 +224,114 @@ def responder_cortesia(intencion, mensaje=""):
         "answer": texto,
         "items": [],
         "meta": {"intencion": "cortesia", "tipo": intencion, "requests_buk": 0},
+    }
+
+
+def responder_cumpleanos(plan):
+    """Cumpleanos del rango. Si no hay ninguno, muestra los que vienen.
+
+    Preguntar "quien esta de cumpleanos" y recibir "nadie" a secas no sirve de
+    nada: lo util es saber a quien hay que saludar pronto.
+    """
+    desde, hasta = plan["desde"], plan["hasta"]
+    hoy = date.today()
+    dias_rango = max((hasta - desde).days, 0)
+    gente, req = buk.cumpleanos(desde, dias_rango, hoy=hoy)
+
+    if gente:
+        if dias_rango == 0 and len(gente) == 1:
+            texto = f"Hoy está de cumpleaños {gente[0]['nombre']}."
+        elif dias_rango == 0:
+            nombres = ", ".join(p["nombre"] for p in gente)
+            texto = f"Hoy están de cumpleaños {len(gente)} personas: {nombres}."
+        else:
+            pendientes = [p for p in gente if p["faltan"] >= 0]
+            texto = f"{len(gente)} cumpleaños {plan['etiqueta']}"
+            if pendientes and len(pendientes) < len(gente):
+                texto += f", {len(pendientes)} todavía por venir."
+            else:
+                texto += "."
+        return {"answer": texto, "items": [_item_cumple(p) for p in gente],
+                "meta": {"intencion": "cumpleanos", "requests_buk": req}}
+
+    proximos, _ = buk.cumpleanos(hoy, settings.CUMPLE_HORIZONTE_DIAS, hoy=hoy)
+    if not proximos:
+        texto = (f"Nadie cumple años {plan['etiqueta']}, y tampoco en los "
+                 f"próximos {settings.CUMPLE_HORIZONTE_DIAS} días.")
+        return {"answer": texto, "items": [],
+                "meta": {"intencion": "cumpleanos", "requests_buk": req}}
+
+    faltan = proximos[0]["faltan"]
+    cuando = "mañana" if faltan == 1 else f"en {faltan} días"
+    siguientes = [p for p in proximos if p["faltan"] == faltan]
+    if len(siguientes) == 1:
+        quien = siguientes[0]["nombre"]
+    else:
+        quien = ", ".join(p["nombre"] for p in siguientes)
+    texto = (f"Nadie cumple años {plan['etiqueta']}. "
+             f"{'El próximo es' if len(siguientes) == 1 else 'Los próximos son'} "
+             f"{cuando}: {quien}.")
+    return {"answer": texto, "items": [_item_cumple(p) for p in proximos],
+            "meta": {"intencion": "cumpleanos", "proximos": True, "requests_buk": req}}
+
+
+def _item_cumple(persona):
+    faltan = persona["faltan"]
+    if faltan < 0:
+        cuando = "ya pasó"
+    elif faltan == 0:
+        cuando = "hoy"
+    elif faltan == 1:
+        cuando = "mañana"
+    else:
+        cuando = f"en {faltan} días"
+    return {
+        "id": persona["id"],
+        "nombre": persona["nombre"],
+        "cargo": " · ".join(x for x in (persona.get("cargo"), persona.get("area")) if x),
+        "tipo": "cumpleaños",
+        "detalle": "",
+        "desde": persona["fecha"],
+        "hasta": None,
+        "dias": None,
+        "estado": cuando,
+        "media_jornada": False,
+    }
+
+
+def responder_trabajando(plan):
+    """Quien SI esta en su jornada: la nomina menos los ausentes."""
+    desde, hasta = plan["desde"], plan["hasta"]
+    personas_map, req_dir = buk.directorio()
+    aviso = _grupo_no_disponible(plan["mensaje"], personas_map, req_dir)
+    if aviso:
+        return aviso
+    registros, req = buk.fuera(desde, hasta)
+
+    area = intents.detectar_area(intents.normalizar(plan["mensaje"]),
+                                 {p["area"] for p in personas_map.values() if p.get("area")})
+    equipo = list(personas_map.values())
+    if area:
+        equipo = _filtrar_area(equipo, area)
+        plan = {**plan, "etiqueta": f"{plan['etiqueta']} en {area}"}
+
+    fuera_ids = {r["employee_id"] for r in registros}
+    presentes = [p for p in equipo if p["id"] not in fuera_ids]
+    presentes.sort(key=lambda p: p["nombre"])
+
+    total = len(equipo)
+    ausentes = total - len(presentes)
+    if not ausentes:
+        texto = f"Está el equipo completo {plan['etiqueta']}: las {total} personas en su jornada."
+    else:
+        texto = (f"{len(presentes)} de {total} personas están en su jornada "
+                 f"{plan['etiqueta']}; {ausentes} están fuera.")
+
+    return {
+        "answer": texto,
+        "items": [],
+        "meta": {"intencion": "trabajando", "presentes": len(presentes),
+                 "ausentes": ausentes, "requests_buk": req + req_dir},
     }
 
 
@@ -407,6 +550,10 @@ def _resolver(mensaje, hoy):
         return responder_ausencias(plan)
     if plan["intencion"] == "dotacion":
         return responder_dotacion()
+    if plan["intencion"] == "cumpleanos":
+        return responder_cumpleanos(plan)
+    if plan["intencion"] == "trabajando":
+        return responder_trabajando(plan)
     if plan["intencion"] in CORTESIA:
         return responder_cortesia(plan["intencion"], mensaje)
 

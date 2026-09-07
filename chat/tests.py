@@ -14,21 +14,24 @@ from chat import buk, intents
 # documentos corre contra una carpeta vacia.
 SIN_DOCUMENTOS = override_settings(DOCUMENTOS_DIR=tempfile.mkdtemp())
 
-EMPLEADOS = {
-    "pagination": {"next": None},
-    "data": [
-        {"id": 335, "full_name": "Ana Rojas", "rut": "11.111.111-1",
-         "current_job": {"role": {"name": "Analista"}, "boss": {"rut": "22.222.222-2"}}},
-        {"id": 468, "full_name": "Luis Soto", "email": "luis@azerta.cl",
-         "current_job": {"role": {"name": "Disenador"}}},
-    ],
-}
-
 # Las fechas se calculan desde hoy: fijarlas hace que la suite empiece a fallar
 # sola cuando cambia el dia, que es justo lo que paso.
 HOY = date.today()
 DIA = timedelta(days=1)
 _f = lambda dias: (HOY + dias * DIA).isoformat()
+
+EMPLEADOS = {
+    "pagination": {"next": None},
+    "data": [
+        {"id": 335, "full_name": "Ana Rojas", "rut": "11.111.111-1",
+         "birthday": "1979-" + _f(3)[5:],
+         "current_job": {"role": {"name": "Analista"}, "area_id": 1,
+                         "boss": {"rut": "22.222.222-2"}}},
+        {"id": 468, "full_name": "Luis Soto", "email": "luis@azerta.cl",
+         "birthday": "1985-" + _f(200)[5:],
+         "current_job": {"role": {"name": "Disenador"}, "area_id": 2}},
+    ],
+}
 
 # /vacations: una en curso que empezo ANTES del rango (el caso que se perdia)
 VACACIONES = {
@@ -60,9 +63,15 @@ AUSENCIAS = {
 }
 
 
+AREAS = {"pagination": {"next": None},
+         "data": [{"id": 1, "name": "Comunicaciones"}, {"id": 2, "name": "Prensa"}]}
+
+
 def fake_get(url, **kwargs):
     from unittest.mock import Mock
-    if "/vacations" in url:
+    if "/areas" in url:
+        cuerpo = AREAS
+    elif "/vacations" in url:
         cuerpo = VACACIONES
     elif "/absences" in url:
         cuerpo = AUSENCIAS
@@ -499,10 +508,17 @@ class ComplejidadTests(TestCase):
     def test_reconoce_lo_que_no_puede_resolver(self):
         for pregunta in ("compara agosto contra septiembre",
                          "¿qué área tiene más ausencias?",
-                         "¿cuántas personas de comunicaciones están fuera?",
+                         "ranking de areas con mas licencias",
                          "¿por qué hay tanta gente fuera?",
                          "¿cuántos días de vacaciones le quedan a Ana?"):
             self.assertTrue(intents.es_compleja(pregunta), pregunta)
+
+    def test_filtrar_por_un_area_lo_resuelven_las_reglas(self):
+        """Antes iba al modelo; ahora el router sabe filtrar por área."""
+        for pregunta in ("¿cuántas personas de comunicaciones están fuera?",
+                         "¿quién está de vacaciones en asuntos públicos?",
+                         "¿quién está trabajando hoy en prensa?"):
+            self.assertFalse(intents.es_compleja(pregunta), pregunta)
 
     def test_no_marca_las_preguntas_simples(self):
         for pregunta in ("¿quién está fuera hoy?", "licencias esta semana",
@@ -1045,3 +1061,117 @@ class SubdivisionTests(TestCase):
         with override_settings(DOCUMENTOS_DIR=carpeta):
             self.assertIsNone(documentos.responder("¿quién ganó el partido de ayer?"))
             self.assertIsNone(documentos.responder("cuál es el anexo de recepción"))
+
+
+@SIN_DOCUMENTOS
+class CumpleanosTests(TestCase):
+    """Día y mes sí; el año de nacimiento nunca sale de la capa de datos."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _preguntar(self, texto):
+        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
+                                content_type="application/json").json()
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_no_expone_el_ano_de_nacimiento(self, mocked):
+        from chat import buk
+        personas, _ = buk.directorio()
+        crudo = json.dumps(list(personas.values()), ensure_ascii=False)
+        self.assertNotIn("1979", crudo)          # el año del fixture
+        self.assertNotIn("birthday", crudo)
+        self.assertEqual(len(list(personas.values())[0]["cumple"]), 5)  # solo MM-DD
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_avisa_el_proximo_cuando_no_hay_ninguno_hoy(self, mocked):
+        """Responder solo "nadie" no sirve: lo útil es a quién saludar pronto."""
+        cuerpo = self._preguntar("¿quién está de cumpleaños hoy?")
+        self.assertEqual(cuerpo["meta"]["intencion"], "cumpleanos")
+        self.assertTrue(cuerpo["meta"].get("proximos"))
+        self.assertIn("Nadie cumple años hoy", cuerpo["answer"])
+        self.assertIn("Ana Rojas", cuerpo["answer"])   # cumple en 3 días
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_cuenta_los_dias_desde_hoy_y_no_desde_el_rango(self, mocked):
+        """Preguntando por "este mes" el día 7, uno del día 6 ya pasó."""
+        from chat import buk
+        gente, _ = buk.cumpleanos(HOY.replace(day=1), 30, hoy=HOY)
+        for persona in gente:
+            esperado = (date.fromisoformat(persona["fecha"]) - HOY).days
+            self.assertEqual(persona["faltan"], esperado)
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_el_29_de_febrero_se_celebra_el_28(self, mocked):
+        from chat import buk
+        with patch.dict(buk.__dict__):
+            personas, _ = buk.directorio()
+            list(personas.values())[0]["cumple"] = "02-29"
+            gente, _ = buk.cumpleanos(date(2027, 2, 1), 28, hoy=date(2027, 2, 1))
+        self.assertTrue(all(p["fecha"] != "2027-02-29" for p in gente))
+
+
+@SIN_DOCUMENTOS
+class TrabajandoTests(TestCase):
+    def setUp(self):
+        cache.clear()
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_responde_quien_si_esta(self, mocked):
+        cuerpo = self.client.post(
+            "/api/chat/", data=json.dumps({"message": "¿quién está trabajando hoy?"}),
+            content_type="application/json").json()
+        self.assertEqual(cuerpo["meta"]["intencion"], "trabajando")
+        self.assertEqual(cuerpo["meta"]["presentes"] + cuerpo["meta"]["ausentes"], 2)
+
+
+class UmbralDocumentosTests(TestCase):
+    """El umbral depende del corpus; la métrica no debe depender del tamaño."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _carpeta(self, cuantos):
+        carpeta = tempfile.mkdtemp()
+        for i in range(cuantos):
+            (Path(carpeta) / f"doc{i}.txt").write_text(
+                f"Tema {i}:\nContenido del tema numero {i} con texto suficiente "
+                f"para que la seccion se considere valida y no se descarte.\n",
+                encoding="utf-8")
+        return carpeta
+
+    def test_sin_embeddings_y_corpus_grande_no_responde(self):
+        """Prefiere callarse antes que citar la sección equivocada."""
+        from chat import documentos
+        carpeta = self._carpeta(documentos.MAX_FRAGMENTOS_SIN_EMBEDDINGS + 5)
+        with override_settings(DOCUMENTOS_DIR=carpeta, EMBEDDINGS_ACTIVOS=False):
+            self.assertEqual(documentos.buscar("contenido del tema numero 3"), [])
+
+    def test_sin_embeddings_y_corpus_chico_si_responde(self):
+        from chat import documentos
+        with override_settings(DOCUMENTOS_DIR=self._carpeta(5), EMBEDDINGS_ACTIVOS=False):
+            self.assertTrue(documentos.buscar("contenido del tema numero 3"))
+
+
+@SIN_DOCUMENTOS
+class GrupoDesconocidoTests(TestCase):
+    """BUK no guarda a qué cliente está asignada cada persona."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _preguntar(self, texto):
+        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
+                                content_type="application/json").json()
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_avisa_en_vez_de_responder_por_toda_la_empresa(self, mocked):
+        cuerpo = self._preguntar("¿quién está trabajando hoy en el equipo de Santander?")
+        self.assertEqual(cuerpo["meta"]["intencion"], "grupo_desconocido")
+        self.assertIn("Santander", cuerpo["answer"])
+        self.assertIn("Comunicaciones", cuerpo["answer"])   # ofrece lo que sí tiene
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_un_area_real_si_se_responde(self, mocked):
+        cuerpo = self._preguntar("¿quién está trabajando hoy en el área de prensa?")
+        self.assertEqual(cuerpo["meta"]["intencion"], "trabajando")

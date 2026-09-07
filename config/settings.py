@@ -170,6 +170,10 @@ EMBEDDINGS_PESO = float(os.getenv("EMBEDDINGS_PESO", "0.85"))
 if "test" in sys.argv:
     EMBEDDINGS_ACTIVOS = False
 
+# Cuando nadie cumple anos en la fecha preguntada, se mira hasta aca adelante
+# para poder decir a quien hay que saludar pronto.
+CUMPLE_HORIZONTE_DIAS = int(os.getenv("CUMPLE_HORIZONTE_DIAS", "45"))
+
 # Segundos que se guarda la respuesta completa a una pregunta. Repetirla dentro
 # de esta ventana no consulta BUK ni gasta tokens.
 RESPUESTA_CACHE_TTL = int(os.getenv("RESPUESTA_CACHE_TTL", "600"))

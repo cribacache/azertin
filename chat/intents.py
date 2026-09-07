@@ -54,13 +54,12 @@ PALABRAS_COMPLEJAS = (
     "cuanto tiempo", "mas gente", "mas personas", "quien mas", "cuales son los",
 )
 
-# Familias de rol y areas reales de la nomina. Filtrar por ellas exige cruzar
-# ausencias con el cargo, que el router no hace: preguntarlo sin modelo
-# devolveria el total de la empresa como si fuera el del area.
+# Agregaciones por area que el router NO sabe hacer: rankings y comparaciones
+# entre areas. Filtrar POR un area concreta si lo sabe hacer (detectar_area),
+# asi que los nombres de area ya no van aca.
 PALABRAS_AREA = (
-    "comunicaciones", "asuntos publicos", "digital", "directores", "consultores",
-    "ejecutivos", "gerentes", "socios", "del area", "de mi area",
-    "del equipo de", "departamento",
+    "que area", "cual area", "por area", "por equipo", "por cargo",
+    "ranking de areas", "areas con mas", "cada area",
 )
 
 
@@ -120,6 +119,17 @@ def detectar_cortesia(texto):
         return "identidad"
     return None
 
+
+PALABRAS_CUMPLE = ("cumpleanos", "cumpleano", "cumple", "cumplen", "cumpleanero",
+                   "cumpleaneros", "aniversario de nacimiento", "cumplen anos")
+
+# Lo contrario de "quien esta fuera": quien SI esta disponible.
+PALABRAS_TRABAJANDO = ("quien esta trabajando", "quienes estan trabajando",
+                       "quien trabaja hoy", "esta todo el equipo",
+                       "esta completo el equipo", "quien si esta",
+                       "quienes si estan", "con quien si puedo contar",
+                       "quien esta disponible", "quienes estan disponibles",
+                       "quien vino", "quienes vinieron")
 
 PALABRAS_DOTACION = ("cuantas personas", "cuantos empleados", "dotacion", "headcount", "nomina")
 
@@ -206,6 +216,53 @@ def detectar_subtipo(texto):
     return None
 
 
+def detectar_area(texto, nombres_area):
+    """Nombre de area mencionado en la pregunta, si lo hay.
+
+    Se compara contra las areas reales de BUK en vez de una lista escrita a
+    mano: si manana crean un area nueva, funciona sin tocar el codigo.
+    """
+    mejor = None
+    for nombre in nombres_area:
+        clave = normalizar(nombre)
+        if len(clave) >= 4 and clave in texto:
+            if mejor is None or len(clave) > len(normalizar(mejor)):
+                mejor = nombre
+    return mejor
+
+
+# "el equipo de Santander", "el area de Cencosud". BUK no guarda a que cliente
+# o cuenta esta asignada cada persona (current_job.project viene vacio), asi que
+# si el grupo nombrado no es un area real hay que decirlo, no responder por toda
+# la empresa como si la pregunta no tuviera filtro.
+_GRUPO = re.compile(
+    r"\b(?:equipo|cuenta|celula|area|grupo)\s+(?:de|del|de la)\s+([a-z0-9ñ][\w\s]{2,28})",
+    re.IGNORECASE)
+
+
+def detectar_grupo_desconocido(texto, nombres_area):
+    """Grupo nombrado en la pregunta que no corresponde a un area de BUK."""
+    encontrado = _GRUPO.search(texto)
+    if not encontrado:
+        return None
+    grupo = encontrado.group(1).strip(" ?¿.,")
+    if not grupo or detectar_area(normalizar(grupo), nombres_area):
+        return None
+    # "equipo de trabajo" o "area de personas" no nombran a un cliente
+    if grupo in ("trabajo", "la empresa", "azerta", "personas"):
+        return None
+    # se normaliza a minusculas para comparar, pero se devuelve presentable
+    return grupo.title()
+
+
+def detectar_cumple(texto):
+    return any(p in texto for p in PALABRAS_CUMPLE)
+
+
+def detectar_trabajando(texto):
+    return any(p in texto for p in PALABRAS_TRABAJANDO)
+
+
 def detectar_categoria(texto):
     for categoria, palabras in CATEGORIA_POR_PALABRA:
         if any(p in texto for p in palabras):
@@ -217,6 +274,16 @@ def interpretar(mensaje, hoy=None):
     """Devuelve un dict con la intencion y los filtros a aplicar."""
     hoy = hoy or date.today()
     texto = normalizar(mensaje)
+
+    if detectar_cumple(texto):
+        desde, hasta, etiqueta = detectar_rango(texto, hoy)
+        return {"intencion": "cumpleanos", "desde": desde, "hasta": hasta,
+                "etiqueta": etiqueta}
+
+    if detectar_trabajando(texto):
+        desde, hasta, etiqueta = detectar_rango(texto, hoy)
+        return {"intencion": "trabajando", "desde": desde, "hasta": hasta,
+                "etiqueta": etiqueta}
 
     categoria = detectar_categoria(texto)
     pregunta_ausencia = categoria is not None or any(p in texto for p in PALABRAS_AUSENCIA)

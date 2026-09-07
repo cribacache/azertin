@@ -9,6 +9,7 @@ palabras del documento. Es la misma division en secciones que necesitaria un
 modelo de lenguaje despues, asi que el trabajo no se pierde si se agrega uno.
 """
 
+import logging
 import re
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from django.core.cache import cache
 from . import embeddings, pdf
 from .intents import normalizar
 
+logger = logging.getLogger(__name__)
+
 EXTENSIONES = (".md", ".txt", ".pdf")
 IGNORADOS = ("leeme", "readme")  # documentacion del repo, no contenido consultable
 MINIMO_SECCION = 120  # menos que esto es un encabezado, no una respuesta
@@ -26,14 +29,26 @@ MINIMO_SECCION = 120  # menos que esto es un encabezado, no una respuesta
 # de todos: no gana en ninguno. Partirla por parrafos es lo que mas mejora la
 # recuperacion, mas que cambiar el algoritmo de busqueda.
 MAX_SECCION = 700
-MINIMO_PUNTAJE = 1.6   # busqueda lexica sola: por debajo es casualidad
-ESCALA_LEXICA = 6.0    # puntaje lexico que se considera coincidencia plena
+# El puntaje lexico se expresa como fraccion de la pregunta que quedo cubierta,
+# no como un valor absoluto. Los pesos IDF crecen con el corpus, asi que un
+# umbral fijo que funciona con 20 fragmentos no significa nada con 981.
+# Normalizar por el maximo alcanzable de cada pregunta lo hace comparable.
+MINIMO_PUNTAJE = 0.45  # busqueda lexica sola, en corpus chico
+TITULO_PESO = 1.5
+
+# Con muchos fragmentos la busqueda lexica deja de discriminar: medido sobre los
+# 981 reales, "cual es el anexo de recepcion" (0.91) puntua mas alto que "puedo
+# aceptar un regalo de un cliente" (0.35), que si esta documentado. No hay
+# umbral que acierte. Pasado este tamano, sin embeddings se prefiere no
+# responder desde documentos antes que citar el reglamento equivocado.
+MAX_FRAGMENTOS_SIN_EMBEDDINGS = 150
 # Umbral cuando hay embeddings. Es alto a proposito: en espanol, cualquier
 # pregunta de RRHH se parece a cualquier seccion de una politica de RRHH, y con
-# un umbral bajo el buscador "encuentra" respuesta para todo. Medido sobre el
-# corpus real: las preguntas que si estan respondidas puntuan 0.63-0.80 y las
-# que no, 0.50-0.59. Al agregar documentos conviene volver a medirlo.
-MINIMO_MEZCLA = 0.61
+# un umbral bajo el buscador "encuentra" respuesta para todo. Medido sobre los
+# 981 fragmentos reales: lo documentado puntua 0.70-0.82 y lo que no, 0.53-0.57
+# (salvo un caso limite en 0.76). Al agregar documentos hay que volver a medirlo:
+# el umbral depende del corpus, no es una constante universal.
+MINIMO_MEZCLA = 0.67
 
 VACIAS = {
     "que", "cual", "cuales", "como", "cuando", "donde", "quien", "quienes",
@@ -243,26 +258,35 @@ def buscar(mensaje, cuantas=3):
 
     largos = [len(s["indice"]) or 1 for s in secciones]
     promedio = sum(largos) / len(largos)
+    # lo que sumaria una seccion que cubriera toda la pregunta en cuerpo y titulo
+    maximo = (1 + TITULO_PESO) * sum(pesos.get(r, 0.0) for r in consulta)
 
     # Semantica: encuentra la seccion aunque la pregunta no comparta palabras
     # con ella. Si no hay clave o la API falla, queda solo la lexica.
     vectores = embeddings.vectores_de(secciones)
     consulta_vec = embeddings.vector_consulta(mensaje) if vectores else None
 
+    if consulta_vec is None and len(secciones) > MAX_FRAGMENTOS_SIN_EMBEDDINGS:
+        logger.warning(
+            "%s fragmentos y sin embeddings: no se busca en documentos para no "
+            "responder con una seccion equivocada. Corre 'manage.py indexar'.",
+            len(secciones),
+        )
+        return []
+
     marcadas = []
     for seccion in secciones:
         cuerpo = {_raiz(p) for p in seccion["indice"]}
         titulo = {_raiz(p) for p in _palabras(seccion["titulo"])}
         puntaje = sum(pesos.get(r, 0.0) for r in consulta & cuerpo)
-        puntaje += 1.5 * sum(pesos.get(r, 0.0) for r in consulta & titulo)
+        puntaje += TITULO_PESO * sum(pesos.get(r, 0.0) for r in consulta & titulo)
         # Sin esto gana siempre la seccion mas larga, que acumula coincidencias
         # por volumen y no por ser la que responde.
         largo = (len(seccion["indice"]) or 1) / promedio
         puntaje /= 0.6 + 0.4 * largo
 
-        # se normaliza a 0..1 para poder mezclarla con el coseno, que ya viene
-        # en esa escala; sin normalizar, la lexica dominaria por magnitud
-        lexico = min(puntaje / ESCALA_LEXICA, 1.0)
+        # fraccion del peso informativo de la pregunta que esta seccion cubre
+        lexico = min(puntaje / maximo, 1.0) if maximo else 0.0
         if consulta_vec:
             semantico = embeddings.similitud(
                 consulta_vec, vectores.get(seccion.get("firma"))

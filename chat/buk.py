@@ -11,6 +11,8 @@ asi que se usa como limite inferior con un margen mayor a la vacacion mas larga
 registrada (58 dias) y el solapamiento real se resuelve aca.
 """
 
+from datetime import date
+
 import requests
 from django.conf import settings
 from django.core.cache import cache
@@ -38,6 +40,10 @@ TIPOS_VACACION_PLURAL = {
 }
 
 MEDIA_JORNADA = ("start_working_day", "end_working_day")
+
+# Del cumpleanos solo se guarda "MM-DD". El anio revela la edad, que no hace
+# falta para saludar a nadie y es un dato sensible: no cruza esta capa.
+CAMPOS_PUBLICOS_DOC = ("id", "nombre", "cargo", "area", "cumple")
 
 # Campos que pueden salir del backend. El endpoint de empleados expone rut,
 # direccion, cuenta bancaria, salud y prevision; nada de eso cruza esta capa.
@@ -104,6 +110,28 @@ def _nombre(empleado):
     return " ".join(p for p in partes if p).strip() or f"Empleado #{empleado.get('id')}"
 
 
+def _cumple(empleado):
+    """Dia y mes del cumpleanos, sin el anio."""
+    fecha = empleado.get("birthday") or ""
+    if len(fecha) >= 10 and fecha[4] == "-" and fecha[7] == "-":
+        return fecha[5:10]
+    return ""
+
+
+def areas(forzar=False):
+    """Mapa {id: nombre} de areas. Los empleados solo traen el area_id."""
+    if not forzar:
+        cacheado = cache.get("buk:areas")
+        if cacheado is not None:
+            return cacheado, 0
+
+    registros, hechos = _paginar("/areas", {"page_size": 100}, max_paginas=5)
+    mapa = {a["id"]: (a.get("name") or "").strip()
+            for a in registros if isinstance(a, dict) and a.get("id") is not None}
+    cache.set("buk:areas", mapa, settings.BUK_CACHE_TTL)
+    return mapa, hechos
+
+
 def _cargo(empleado):
     rol = ((empleado.get("current_job") or {}).get("role")) or {}
     if isinstance(rol, dict):
@@ -112,22 +140,69 @@ def _cargo(empleado):
 
 
 def directorio(forzar=False):
-    """Mapa {id: {id, nombre, cargo}} de empleados activos, cacheado."""
+    """Mapa {id: {id, nombre, cargo, area, cumple}} de activos, cacheado."""
     if not forzar:
-        cacheado = cache.get("buk:directorio")
+        cacheado = cache.get("buk:directorio:v2")
         if cacheado is not None:
             return cacheado, 0
 
     empleados, hechos = _paginar(
         "/employees/active", {"page_size": settings.BUK_DIRECTORY_PAGE_SIZE}, max_paginas=5
     )
-    mapa = {
-        emp["id"]: {"id": emp["id"], "nombre": _nombre(emp), "cargo": _cargo(emp)}
-        for emp in empleados
-        if isinstance(emp, dict) and emp.get("id") is not None
-    }
-    cache.set("buk:directorio", mapa, settings.BUK_CACHE_TTL)
+    nombres_area, req_areas = areas()
+    hechos += req_areas
+
+    mapa = {}
+    for emp in empleados:
+        if not isinstance(emp, dict) or emp.get("id") is None:
+            continue
+        area_id = (emp.get("current_job") or {}).get("area_id")
+        mapa[emp["id"]] = {
+            "id": emp["id"],
+            "nombre": _nombre(emp),
+            "cargo": _cargo(emp),
+            "area": nombres_area.get(area_id, ""),
+            "cumple": _cumple(emp),
+        }
+    cache.set("buk:directorio:v2", mapa, settings.BUK_CACHE_TTL)
     return mapa, hechos
+
+
+def cumpleanos(desde, dias=0, hoy=None):
+    """Personas que cumplen entre `desde` y `desde + dias`, en orden.
+
+    `hoy` es la referencia para contar los dias que faltan, y por defecto es
+    `desde`. Importa cuando el rango empieza antes de hoy: al preguntar por
+    "este mes" el dia 7, un cumpleanos del dia 6 ya paso, y contarlo desde el
+    inicio del mes lo mostraria como si faltaran cinco dias.
+    """
+    hoy = hoy or desde
+    personas, hechos = directorio()
+    salida = []
+    for persona in personas.values():
+        cumple = persona.get("cumple") or ""
+        if len(cumple) != 5:
+            continue
+        try:
+            mes, dia = int(cumple[:2]), int(cumple[3:5])
+        except ValueError:
+            continue
+        for anio in (desde.year, desde.year + 1):
+            try:
+                proximo = date(anio, mes, dia)
+            except ValueError:
+                # 29 de febrero en anio no bisiesto: se celebra el 28
+                proximo = date(anio, 2, 28) if (mes, dia) == (2, 29) else None
+            if proximo is None or proximo < desde:
+                continue
+            if (proximo - desde).days > dias:
+                break
+            faltan = (proximo - hoy).days
+            salida.append({**persona, "fecha": proximo.isoformat(), "faltan": faltan})
+            break
+
+    salida.sort(key=lambda p: (p["faltan"], p["nombre"]))
+    return salida, hechos
 
 
 def _cubre(registro, desde, hasta):
