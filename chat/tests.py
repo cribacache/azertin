@@ -1675,3 +1675,101 @@ class MemoriaConversacionTests(TestCase):
             asistente.responder("y ahora?", HOY, alias=alias_previo)
 
         self.assertEqual(alias_previo, {"Ana Rojas": "Persona 1"})
+
+
+class EquipoDeTests(TestCase):
+    """`equipo_de`: la pregunta inversa a info_persona ("quien es del equipo
+    de Y", "muestrame el equipo que atiende Y")."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _planilla(self):
+        import openpyxl
+        carpeta = tempfile.mkdtemp()
+        libro = openpyxl.Workbook()
+        hoja = libro.active
+        hoja.title = "Detalle Cuenta-Persona"
+        for _ in range(3):
+            hoja.append([])
+        hoja.append(["BANCO SANTANDER", "Ana Rojas", None, "11.111.111-1"])
+        libro.save(Path(carpeta) / "cuentas.xlsx")
+        return carpeta
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_equipo_de_una_cuenta(self, mocked):
+        from chat import herramientas
+        with override_settings(DOCUMENTOS_DIR=self._planilla()):
+            resultado = herramientas.equipo_de("Santander")
+        self.assertTrue(resultado["encontrado"])
+        self.assertEqual(resultado["grupo"], "BANCO SANTANDER")
+        self.assertIn("Ana Rojas", [p["nombre"] for p in resultado["personas"]])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_equipo_de_un_area(self, mocked):
+        from chat import herramientas
+        directorio, _ = buk.directorio()
+        area = next(p["area"] for p in directorio.values() if p.get("area"))
+        resultado = herramientas.equipo_de(area)
+        self.assertTrue(resultado["encontrado"])
+        self.assertGreaterEqual(resultado["total"], 1)
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_grupo_inexistente_no_encuentra(self, mocked):
+        from chat import herramientas
+        resultado = herramientas.equipo_de("no existe este grupo")
+        self.assertFalse(resultado["encontrado"])
+
+
+class PoliticaVacacionesDocTests(TestCase):
+    """El documento real debe responder, por texto solo (sin embeddings), a
+    las preguntas frecuentes de vacaciones. Si esto se rompe, alguien cambio
+    los titulos del documento o los umbrales de busqueda."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _con_el_documento_real(self):
+        origen = Path(settings.BASE_DIR) / "datos" / "politica_vacaciones.md"
+        carpeta = tempfile.mkdtemp()
+        (Path(carpeta) / "politica_vacaciones.md").write_text(
+            origen.read_text(encoding="utf-8"), encoding="utf-8")
+        return override_settings(DOCUMENTOS_DIR=carpeta, EMBEDDINGS_ACTIVOS=False)
+
+    def test_preguntas_frecuentes_encuentran_seccion(self):
+        """El modelo pide 3 secciones (buscar_politica), no solo la primera:
+        alcanza con que el titulo correcto este entre esas 3.
+        """
+        from chat import documentos
+        preguntas_y_titulo = [
+            ("cuantos dias de vacaciones me corresponden al ano",
+             "Cuántos días de vacaciones corresponden"),
+            ("puedo fraccionar mis vacaciones o debo tomar los 15 dias seguidos",
+             "Cuántos días de vacaciones corresponden"),
+            ("que pasa si me enfermo mientras estoy de vacaciones",
+             "Qué pasa si me enfermo estando de vacaciones"),
+            ("con cuanta anticipacion debo pedir mis vacaciones",
+             "Cómo y con cuánta anticipación se piden las vacaciones"),
+            ("como funciona el incentivo de dias adicionales por menor demanda",
+             "Incentivo de días adicionales por menor demanda"),
+            ("soy de asuntos publicos, cuales son mis meses de menor demanda",
+             "Incentivo de días adicionales por menor demanda"),
+            ("tengo derecho a teletrabajar en vacaciones escolares de mis hijos",
+             "Teletrabajo por conciliación de la vida laboral, familiar y personal"),
+            ("cuantos dias administrativos tengo al ano", "Días administrativos"),
+            ("puedo elegir si trabajo el 24 o el 31 de diciembre",
+             "Feriado especial de Navidad o Año Nuevo"),
+        ]
+        with self._con_el_documento_real():
+            for pregunta, titulo in preguntas_y_titulo:
+                encontradas = documentos.buscar(pregunta, cuantas=3)
+                titulos = [s["titulo"] for s in encontradas]
+                self.assertIn(titulo, titulos, f"{pregunta!r} -> {titulos}")
+
+    def test_no_quedan_datos_personales_de_la_firma(self):
+        """El .txt original traia el email y RUT de quien firmo el documento:
+        no deben terminar citables en una respuesta del bot."""
+        origen = Path(settings.BASE_DIR) / "datos" / "politica_vacaciones.md"
+        contenido = origen.read_text(encoding="utf-8").lower()
+        self.assertNotIn("@gmail.com", contenido)
+        self.assertNotIn("12.454.685-0", contenido)

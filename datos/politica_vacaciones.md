@@ -1,8 +1,9 @@
 Política de Vacaciones y Días Administrativos
 Azerta
+
 Objetivo:
-Determinar lineamientos claros y equitativos para la solicitud, planiﬁcación, asignación y gestión de vacaciones, días
-administrativos y feriados de ﬁn de año de los colaboradores de Azerta, asegurando el equilibrio entre el bienestar de
+Determinar lineamientos claros y equitativos para la solicitud, planificación, asignación y gestión de vacaciones, días
+administrativos y feriados de fin de año de los colaboradores de Azerta, asegurando el equilibrio entre el bienestar de
 éstos y la continuidad operativa.
 
 Alcance:
@@ -12,9 +13,8 @@ Vigencia:
 Esta política comienza a regir el 1 de julio de 2025. De igual forma se debe considerar que gran parte de los lineamientos
 expuestos, ya se encuentran operativos de acuerdo a la ley y la normativa vigente.
 
-I. Vacaciones
+## Cuántos días de vacaciones corresponden
 
-Aspectos legales:
 Conforme a lo establecido en el Código del Trabajo:
 Los trabajadores con más de un año de servicio en una empresa tienen derecho a un feriado anual (vacaciones) de
 quince días hábiles, con remuneración íntegra, que se otorga según las formalidades que establece el respectivo
@@ -31,7 +31,14 @@ dos años siguientes, como máximo, para velar por el resguardo del descanso del
 Las vacaciones pueden tomarse en un periodo o fraccionarse, siempre que un bloque considere un mínimo de 10
 días hábiles consecutivos, salvo acuerdo mutuo entre el colaborador y Azerta.
 
-Otros aspectos a considerar:
+## Puedo tomar vacaciones con menos de un año en la empresa
+
+Por norma general, los colaboradores podrán tomar sus vacaciones una vez que hayan cumplido un año continuo de
+trabajo en Azerta. Sin embargo, en casos excepcionales y justificados, se podrá autorizar el adelanto de vacaciones
+(antes de cumplir el año), la acumulación de períodos, o el fraccionamiento en bloques más pequeños, siempre que
+exista un acuerdo previo entre la jefatura directa y del área, más la gerencia de Personas.
+
+## Qué pasa si me enfermo estando de vacaciones
 
 El descanso vacacional comienza el primer día hábil en que el colaborador se ausenta con permiso por vacaciones y
 termina el día antes de su regreso al trabajo.
@@ -43,15 +50,11 @@ continuidad del servicio al cliente.
 En caso de que el profesional se enferme durante sus vacaciones, podrá solicitar la reprogramación de esos días,
 presentando la licencia médica correspondiente.
 
-Por norma general, los colaboradores podrán tomar sus vacaciones una vez que hayan cumplido un año continuo de
-trabajo en Azerta. Sin embargo, en casos excepcionales y justiﬁcados, se podrá autorizar el adelanto de vacaciones
-(antes de cumplir el año), la acumulación de períodos, o el fraccionamiento en bloques más pequeños, siempre que
-exista un acuerdo previo entre la jefatura directa y del área, más la gerencia de Personas.
+## Cómo y con cuánta anticipación se piden las vacaciones
 
-Procedimiento para la solicitud de vacaciones:
 Para períodos de alta demanda como verano (enero-febrero), vacaciones de invierno (calendario Mineduc) y Fiestas
 Patrias, la coordinación de las vacaciones deberá ser liderada por cada director (a) de cuenta, quien será
-responsable de organizar las fechas del equipo y presentar la planiﬁcación consolidada al líder del área
+responsable de organizar las fechas del equipo y presentar la planificación consolidada al líder del área
 correspondiente. Solo una vez aprobada esta coordinación, se podrá ingresar la solicitud formal en la plataforma
 BUK.
 
@@ -65,10 +68,11 @@ de alta demanda.
 Las solicitudes serán aprobadas o rechazadas por la jefatura directa y la gerencia de Personas dentro de un plazo de
 5 días hábiles desde su presentación.
 
-En caso de conﬂicto en las fechas solicitadas, se aplicarán criterios como: fecha de solicitud de vacaciones,
+En caso de conflicto en las fechas solicitadas, se aplicarán criterios como: fecha de solicitud de vacaciones,
 antigüedad en Azerta, fechas de sus últimas vacaciones, entre otros.
 
-Incentivos de vacaciones en período de menor demanda
+## Incentivo de días adicionales por menor demanda
+
 Los colaboradores que tomen al menos 10 días hábiles consecutivos de vacaciones durante períodos de menor
 demanda recibirán 2 días adicionales de descanso (no acumulativos en caso de no tomarlos) para ser utilizados
 durante sus vacaciones.
@@ -79,7 +83,7 @@ Patrias, Navidad, Año Nuevo o cualquier otro feriado que considere en total (d�
 días.
 
 En el caso del área de Asuntos Públicos, como excepción por la naturaleza de sus servicios, serán
-considerados meses de menor demanda: desde el 1 de febrero hasta el 31 de diciembre ; con la excepción de
+considerados meses de menor demanda: desde el 1 de febrero hasta el 31 de diciembre; con la excepción de
 cualquier fecha importante que sea indicada por la dirección del área, tales como: elecciones de autoridades,
 semana de la cuenta pública Presidencial y/o festividades como Semana Santa, Vacaciones de Invierno (colegios),
 Fiestas Patrias, Navidad, Año Nuevo o cualquier otro feriado que considere en total (días hábiles e inhábiles) más de
@@ -89,7 +93,7 @@ En el caso de que gran parte del equipo de Asuntos Públicos opte por tomarse va
 área podrá evaluar cada solicitud en consideración a que es necesario que se asegure el normal funcionamiento de
 las cuentas de esta área.
 
-II. Conciliación de la vida laboral, familiar y personal
+## Teletrabajo por conciliación de la vida laboral, familiar y personal
 
 De acuerdo con lo establecido en la Ley de Conciliación laboral (N°21.645), los trabajadores y trabajadoras que sean
 padres, madres o cuidadores de menores de hasta 14 años, así como de personas con discapacidad o dependencia
@@ -105,10 +109,10 @@ a distancia (reuniones y actividades presenciales, entre otros), como la continu
 La jefatura directa, junto a la dirección del área y recursos humanos deberán dar una respuesta al requerimiento,
 por escrito, en un plazo máximo de 5 días hábiles.
 
-III. Días administrativos:
+## Días administrativos
 
 Cada colaborador tiene derecho a un día administrativo por semestre, el cual no se puede acumular para el
-siguiente semestre si no se utiliza. Es importante tener en cuenta que este día debe utilizarse para ﬁnes
+siguiente semestre si no se utiliza. Es importante tener en cuenta que este día debe utilizarse para fines
 administrativos, como por ejemplo trámites u otros similares.
 
 No puede ser solicitado en las siguientes circunstancias:
@@ -121,46 +125,28 @@ organizarnos y asegurar que las operaciones continúen sin inconvenientes.
 
 Las excepciones se revisarán caso a caso.
 
-IV. Feriado especial de Navidad o Año Nuevo:
+## Feriado especial de Navidad o Año Nuevo
 
-Descripción del Beneficio
 Con el objetivo de promover el bienestar de nuestros colaboradores y facilitar la organización durante las
-festividades de ﬁn de año, Azerta otorga un día feriado adicional en vísperas de Navidad (24 de diciembre) o
-vísperas de Año Nuevo (31 de diciembre). Este beneﬁcio es rotativo y se debe coordinar dentro de los equipos para
+festividades de fin de año, Azerta otorga un día feriado adicional en vísperas de Navidad (24 de diciembre) o
+vísperas de Año Nuevo (31 de diciembre). Este beneficio es rotativo y se debe coordinar dentro de los equipos para
 garantizar la continuidad operativa de las cuentas.
 
 Los colaboradores que trabajen el 24 o el 31 de diciembre podrán teletrabajar, salvo que las necesidades del servicio
 requieran lo contrario.
 
-Reglas para la Asignación
-Turnos rotativos y equilibrados: Cada equipo deberá turnarse de forma equitativa entre el 24 y el 31 de
-diciembre. Es decir que debe Directores, Consultores y Ejecutivos deben estar bien representados en ambos
+Turnos rotativos y equilibrados: cada equipo deberá turnarse de forma equitativa entre el 24 y el 31 de
+diciembre. Es decir que Directores, Consultores y Ejecutivos deben estar bien representados en ambos
 periodos.
 
 La rotación será registrada por la gerencia de Personas para garantizar la equidad y equilibrio en los turnos.
 
-Coordinación interna: Cada Director de cuenta es responsable de organizar y deﬁnir los turnos, asegurando que al
+Coordinación interna: cada Director de cuenta es responsable de organizar y definir los turnos, asegurando que al
 menos dos personas (Director (a) o Consultor (a) y Ejecutivo (a)) del equipo estén disponibles para atender las
 cuentas asignadas en ambos días.
 
-La planiﬁcación de turnos debe quedar resuelta y validada por la gerencia del área y de Personas a más tardar el
+La planificación de turnos debe quedar resuelta y validada por la gerencia del área y de Personas a más tardar el
 15 de diciembre.
 
-Seguimiento y cumplimiento: La gerencia de Personas dará seguimiento a la correcta implementación de los
+Seguimiento y cumplimiento: la gerencia de Personas dará seguimiento a la correcta implementación de los
 turnos y asegurará que este beneficio se asigne de manera justa, equilibrada y equitativa.
-Firmado electrónicamente por:
-Nombre
-Maria Victoria Burr Guarachi
-Número de Documento 12.454.685-0
-Email
-burr.victoria@gmail.com
-Fecha
-02/06/2025 a las 12:01
-IP
-152.230.46.146
-Token
-d89c0192102fcc400e931ccff57d6643
-
-Verifique la validez de este documento escaneando el siguiente código
-
-

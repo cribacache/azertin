@@ -7,7 +7,7 @@ reglas. Lo que no pase por aca, el modelo no lo puede ver ni inventar.
 
 from datetime import date
 
-from . import buk, documentos, personas
+from . import buk, cuentas, documentos, intents, personas
 
 MAX_PERSONAS = 60  # techo para no mandar listados enormes al modelo
 
@@ -112,6 +112,46 @@ def info_persona(nombre):
     }
 
 
+def equipo_de(grupo):
+    """Quien compone un equipo: una cuenta/cliente o un area.
+
+    Cubre "quien es del equipo/cuenta de Y" y "muestrame el equipo que
+    atiende Y": es la pregunta inversa a `info_persona` (ahi se pregunta por
+    la persona, aca por el grupo).
+    """
+    directorio, _ = buk.directorio()
+    cuenta = cuentas.buscar(grupo or "")
+
+    if cuenta and "ambiguas" in cuenta:
+        return {
+            "encontrado": False,
+            "motivo": "El nombre coincide con varias cuentas.",
+            "candidatos": cuenta["ambiguas"],
+        }
+
+    if cuenta:
+        nombre_grupo = cuenta["nombre"]
+        miembros = [p for p in directorio.values()
+                    if nombre_grupo in (p.get("cuentas") or [])]
+    else:
+        nombres_area = {p["area"] for p in directorio.values() if p.get("area")}
+        area = intents.detectar_area(intents.normalizar(grupo or ""), nombres_area)
+        if not area:
+            return {"encontrado": False,
+                    "motivo": "No encuentro esa cuenta ni esa area."}
+        nombre_grupo = area
+        miembros = [p for p in directorio.values() if p.get("area") == area]
+
+    miembros.sort(key=lambda p: p["nombre"])
+    return {
+        "encontrado": True,
+        "grupo": nombre_grupo,
+        "total": len(miembros),
+        "personas": [{"nombre": p["nombre"], "cargo": p.get("cargo") or ""}
+                     for p in miembros[:MAX_PERSONAS]],
+    }
+
+
 def cumpleanos(desde=None, dias=0):
     """Quien cumple anos en un rango. Solo dia y mes: el anio no se expone."""
     d = _fecha(desde)
@@ -149,6 +189,7 @@ FUNCIONES = {
     "listar_ausencias": listar_ausencias,
     "ausencias_de_persona": ausencias_de_persona,
     "info_persona": info_persona,
+    "equipo_de": equipo_de,
     "cumpleanos": cumpleanos,
     "dotacion": dotacion,
     "buscar_politica": buscar_politica,
@@ -207,13 +248,30 @@ ESQUEMAS = [
             "description": (
                 "Quien es una persona: su cargo, area y las cuentas o clientes "
                 "que atiende. Usar para 'quien es X', 'que cuentas/clientes "
-                "maneja X' o 'a que cuenta pertenece X'. No trae ausencias ni "
-                "disponibilidad, solo identidad y asignacion."
+                "maneja o atiende X' o 'a que cuenta pertenece X'. No trae "
+                "ausencias ni disponibilidad, solo identidad y asignacion."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {"nombre": {"type": "string"}},
                 "required": ["nombre"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "equipo_de",
+            "description": (
+                "Quien compone un equipo: los integrantes de una cuenta/"
+                "cliente o de un area. Usar para 'quien es del equipo/cuenta "
+                "de Y' o 'muestrame el equipo que atiende Y'. Es al reves de "
+                "info_persona: aca se pregunta por el grupo, no por alguien."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"grupo": {"type": "string"}},
+                "required": ["grupo"],
             },
         },
     },
