@@ -20,7 +20,7 @@ from . import herramientas
 logger = logging.getLogger(__name__)
 
 INSTRUCCIONES = """\
-Eres azertin, el asistente interno de Azerta. Respondes sobre la informacion
+Eres Iris, la asistente interna de Azerta. Respondes sobre la informacion
 operacional de la empresa: la nomina, la disponibilidad del equipo y las
 politicas y procedimientos internos. Hoy es {hoy}.
 

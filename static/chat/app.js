@@ -5,18 +5,16 @@ const messages = document.querySelector("#messages");
 const vacio = document.querySelector("#empty-state");
 const csrftoken = document.querySelector("[name=csrfmiddlewaretoken]").value;
 const mascota = document.querySelector("#mascota");
-const mascotaImg = document.querySelector("#mascota-img");
+const palabra = document.querySelector("#mascota .palabra");
 
-/* La mascota es decorativa: si el archivo no está, la app funciona igual.
-   static/chat/mascota.png */
+/* La mascota es la palabra "azerta". Al empezar la conversación se va a la
+   izquierda y se queda solo en la "a". Es decorativa: si no está, nada falla. */
 let animando = null;
 
-if (mascotaImg) {
-  mascotaImg.addEventListener("load", () => { mascota.hidden = false; });
-  mascotaImg.addEventListener("error", () => { mascota.remove(); });
-  if (mascotaImg.complete && mascotaImg.naturalWidth) mascota.hidden = false;
-  // un click le saca un saltito: es lo único con lo que se puede interactuar
-  mascotaImg.addEventListener("click", () => estadoMascota("feliz", 800));
+if (palabra) {
+  palabra.style.pointerEvents = "auto";
+  palabra.style.cursor = "pointer";
+  palabra.addEventListener("click", () => estadoMascota("feliz", 800));
 }
 
 function estadoMascota(estado, volverEn = 0) {

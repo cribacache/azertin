@@ -333,7 +333,7 @@ CORTESIA = {
     "gracias": "De nada. Cualquier otra cosa que necesites, aquí estoy.",
     "despedida": "Hasta luego.",
     "identidad": (
-        "Soy azertin, el asistente interno de Azerta. Reúno la información "
+        "Soy Iris, el asistente interno de Azerta. Reúno la información "
         "operacional de la empresa para que no tengas que ir a buscarla."
     ),
 }
