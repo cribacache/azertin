@@ -250,6 +250,38 @@ Los días que faltan se cuentan **desde hoy**, no desde el inicio del rango: al
 preguntar por "este mes" el día 7, uno del día 6 se marca "ya pasó" en vez de
 "en 5 días".
 
+## Quiénes componen un equipo
+
+`¿quiénes están en el equipo de CENCOSUD?` es una pregunta distinta de `¿quién
+está disponible en CENCOSUD?`: la primera es por composición, la segunda por
+disponibilidad de hoy. Solo existía la segunda, así que la primera terminaba en
+"todavía no tengo esa información".
+
+Si además se nombra a una persona, se responde sí o no, y dónde sí está:
+
+```
+Taqui está en el equipo de Santander??
+→ No, Francisco "Taqui" Gastón Ramdohr Browne no está en BANCO SANTANDER.
+  Está en AES ANDES, CENCOSUD, GRUPO COSTANERA...
+```
+
+La disponibilidad gana cuando la pregunta trae señal temporal (`quién está
+trabajando **hoy** en Cencosud`), porque ahí sí se pregunta por el día.
+
+### El equipo se hereda entre preguntas
+
+```
+usuario> ¿quiénes están en el equipo de Cencosud?
+azertin> 20 personas en CENCOSUD. [...]
+usuario> están disponibles
+azertin> 19 de 20 personas de CENCOSUD están en su jornada hoy; 1 está fuera.
+```
+
+Es una sola conversación. Solo se hereda si la pregunta nueva **no nombra otro
+equipo**, para no arrastrar un filtro que el usuario ya cambió, y dura lo mismo
+que una desambiguación (180 s). La respuesta menciona el equipo heredado para
+que la suposición quede a la vista.
+
 ## Quién sí está disponible
 
 `¿quién está trabajando hoy?`, `¿está todo el equipo?`, `¿qué ejecutivos están

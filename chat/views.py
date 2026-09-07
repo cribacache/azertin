@@ -505,6 +505,82 @@ def responder_trabajando(plan):
     }
 
 
+def responder_pertenencia(plan):
+    """Quien COMPONE un equipo, o si una persona pertenece a el.
+
+    Es distinto de la disponibilidad: aca no importa si hoy esta o no, importa
+    si la persona esta asignada a esa cuenta o area.
+    """
+    mensaje = plan["mensaje"]
+    personas_map, req = buk.directorio()
+    texto = intents.normalizar(mensaje)
+
+    cuenta = cuentas.buscar(mensaje)
+    if cuenta and "ambiguas" in cuenta:
+        return responder_cuenta_ambigua(cuenta["ambiguas"], mensaje)
+
+    area = None
+    if not cuenta:
+        area = intents.detectar_area(
+            texto, {p["area"] for p in personas_map.values() if p.get("area")})
+
+    if not cuenta and not area:
+        aviso = _grupo_no_disponible(mensaje, personas_map, req)
+        if aviso:
+            return aviso
+        return None   # no nombra ningun equipo: que siga el router
+
+    grupo = cuenta["nombre"] if cuenta else area
+    if cuenta:
+        miembros = _filtrar_cuenta(list(personas_map.values()), grupo)
+    else:
+        miembros = _filtrar_area(list(personas_map.values()), grupo)
+    miembros.sort(key=lambda p: p["nombre"])
+
+    # "¿Taqui esta en el equipo de Santander?" se responde si o no, no con la
+    # lista completa ni con su disponibilidad.
+    ids, _ = personas.buscar(mensaje, personas_map)
+    if len(ids) == 1:
+        pid = next(iter(ids))
+        persona = personas_map[pid]
+        quien = persona.get("nombre_completo") or persona["nombre"]
+        if any(m["id"] == pid for m in miembros):
+            texto_r = f"Sí, {quien} está en {grupo}."
+        else:
+            suyas = persona.get("cuentas") or []
+            texto_r = f"No, {quien} no está en {grupo}."
+            if suyas:
+                texto_r += (f" Está en {', '.join(suyas[:6])}"
+                            + (" y otras." if len(suyas) > 6 else "."))
+            elif persona.get("area"):
+                texto_r += f" Aparece en el área de {persona['area']}."
+        return {"answer": texto_r, "items": [],
+                "meta": {"intencion": "pertenencia", "grupo": grupo,
+                         "requests_buk": req}}
+    if len(ids) > 1:
+        return responder_ambiguo(ids, personas_map, mensaje, req)
+
+    if not miembros:
+        return {"answer": f"No hay nadie asignado a {grupo}.", "items": [],
+                "meta": {"intencion": "pertenencia", "grupo": grupo,
+                         "requests_buk": req}}
+
+    texto_r = (f"{len(miembros)} "
+               f"{'persona' if len(miembros) == 1 else 'personas'} en {grupo}.")
+    items = [{
+        "id": p["id"],
+        "nombre": p.get("nombre_completo") or p["nombre"],
+        "cargo": " · ".join(x for x in (p.get("cargo"), p.get("area")) if x),
+        "tipo": "en el equipo", "detalle": "", "desde": None, "hasta": None,
+        "dias": None, "estado": "", "media_jornada": False,
+    } for p in miembros[: settings.LISTAR_HASTA]]
+    if len(miembros) > settings.LISTAR_HASTA:
+        texto_r += f" Te muestro {settings.LISTAR_HASTA}."
+    return {"answer": texto_r, "items": items,
+            "meta": {"intencion": "pertenencia", "grupo": grupo,
+                     "requests_buk": req}}
+
+
 def responder_dotacion():
     personas_map, req = buk.directorio()
     return {
@@ -625,6 +701,33 @@ def api_status(request):
     })
 
 
+# Respuestas donde tiene sentido acordarse de un equipo o heredarlo.
+INTENCIONES_CON_GRUPO = ("trabajando", "ausencias", "pertenencia", "cumpleanos")
+
+
+def _grupo_mencionado(mensaje, personas_map):
+    """Cuenta o area nombrada en el mensaje, para recordarla o heredarla."""
+    cuenta = cuentas.buscar(mensaje)
+    if cuenta and "ambiguas" not in cuenta:
+        return {"tipo": "cuenta", "nombre": cuenta["nombre"]}
+    area = intents.detectar_area(
+        intents.normalizar(mensaje),
+        {p["area"] for p in personas_map.values() if p.get("area")})
+    return {"tipo": "area", "nombre": area} if area else None
+
+
+def _heredar_grupo(mensaje, contexto, personas_map):
+    """Agrega al mensaje el equipo del que se venia hablando.
+
+    "¿quienes estan en el equipo de Cencosud?" y luego "estan disponible" es una
+    sola conversacion. Solo se hereda si el mensaje nuevo no nombra otro grupo,
+    para no arrastrar un filtro que el usuario ya cambio.
+    """
+    if not contexto or _grupo_mencionado(mensaje, personas_map):
+        return mensaje, None
+    return f"{mensaje} en {contexto['nombre']}", contexto
+
+
 def _sin_privados(respuesta):
     """Quita las claves internas antes de mandar la respuesta al navegador."""
     return {k: v for k, v in respuesta.items() if not k.startswith("_")}
@@ -692,6 +795,21 @@ def chat_message(request):
             contar(mensaje, resuelta["meta"].get("intencion"))
             return JsonResponse(_sin_privados(resuelta))
 
+    # Una pregunta corta que sigue a otra hereda el equipo: "estan disponible"
+    # despues de "quienes estan en Cencosud" habla de Cencosud.
+    contexto_grupo = request.session.get("grupo")
+    heredado = None
+    if (contexto_grupo
+            and intents.interpretar(mensaje, hoy)["intencion"] in INTENCIONES_CON_GRUPO):
+        try:
+            personas_map, _ = buk.directorio()
+            mensaje_efectivo, heredado = _heredar_grupo(
+                mensaje, contexto_grupo, personas_map)
+        except buk.BukError:
+            mensaje_efectivo = mensaje
+        if heredado:
+            mensaje = mensaje_efectivo
+
     # Misma pregunta el mismo dia: se sirve del cache, sin BUK ni tokens.
     cacheada = respuestas.obtener(mensaje, hoy)
     if cacheada is not None:
@@ -709,6 +827,21 @@ def chat_message(request):
     respuesta["meta"]["desde_cache"] = False
     # Una pregunta que quedo esperando aclaracion no se cachea: la respuesta
     # depende de lo que conteste el usuario, no solo del texto.
+    # Se recuerda el equipo nombrado, pero solo cuando la respuesta fue sobre
+    # personas: un saludo o una politica no tienen por que consultar BUK.
+    if respuesta["meta"].get("intencion") in INTENCIONES_CON_GRUPO:
+        try:
+            personas_map, _ = buk.directorio()
+            grupo = _grupo_mencionado(mensaje, personas_map)
+            if grupo:
+                request.session["grupo"] = grupo
+                request.session.set_expiry(settings.DESAMBIGUACION_SEGUNDOS)
+        except buk.BukError:
+            pass
+
+    if heredado:
+        respuesta["meta"]["grupo_heredado"] = heredado["nombre"]
+
     pendiente_nuevo = respuesta.pop("_pendiente", None)
     if pendiente_nuevo is not None:
         request.session["pendiente"] = pendiente_nuevo
@@ -848,6 +981,14 @@ def _resolver(mensaje, hoy):
     # directorio buscando a alguien que no se nombro.
     if plan["intencion"] in CORTESIA:
         return responder_cortesia(plan["intencion"], mensaje)
+
+    # "¿quienes estan en el equipo de X?" pregunta por la composicion, no por
+    # la disponibilidad. Va antes de la busqueda de persona porque "¿Taqui esta
+    # en el equipo de Santander?" nombra a alguien pero no pregunta si esta hoy.
+    if plan["intencion"] == "pertenencia":
+        respuesta = responder_pertenencia(plan)
+        if respuesta is not None:
+            return respuesta
 
     # Si la pregunta nombra a alguien, esa persona manda sobre la intencion de
     # grupo: "felipe toro esta disponible?" pregunta por Felipe, no por la

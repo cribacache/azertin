@@ -131,6 +131,17 @@ PALABRAS_TRABAJANDO = ("quien esta trabajando", "quienes estan trabajando",
                        "disponible", "disponibles",
                        "quien vino", "quienes vinieron")
 
+# "Quienes estan en el equipo de X" pregunta por la COMPOSICION del equipo, no
+# por quien esta disponible hoy. Son preguntas distintas y antes solo existia la
+# segunda, asi que la primera terminaba en "no tengo esa informacion".
+PALABRAS_PERTENENCIA = (
+    "en el equipo de", "del equipo de", "en el equipo", "de que equipo",
+    "en la cuenta", "de la cuenta", "en la cuenta de", "pertenece",
+    "quienes son de", "quienes estan en", "quienes trabajan en",
+    "quien esta en", "quienes componen", "quienes integran", "integra el",
+    "forma parte", "quienes ven", "quien lleva",
+)
+
 PALABRAS_DOTACION = ("cuantas personas", "cuantos empleados", "dotacion", "headcount", "nomina")
 
 
@@ -296,6 +307,14 @@ def interpretar(mensaje, hoy=None):
         desde, hasta, etiqueta = detectar_rango(texto, hoy)
         return {"intencion": "cumpleanos", "desde": desde, "hasta": hasta,
                 "etiqueta": etiqueta}
+
+    # La pertenencia se evalua antes que la disponibilidad solo si no hay
+    # senal temporal: "quien esta trabajando HOY en Cencosud" es disponibilidad.
+    if (any(p in texto for p in PALABRAS_PERTENENCIA)
+            and not detectar_trabajando(texto)
+            and not any(p in texto for p in PALABRAS_AUSENCIA)
+            and detectar_categoria(texto) is None):
+        return {"intencion": "pertenencia"}
 
     if detectar_trabajando(texto):
         desde, hasta, etiqueta = detectar_rango(texto, hoy)

@@ -1506,3 +1506,69 @@ class QuisoDecirTests(TestCase):
                           "apodo": "Bastián"}}
         self.assertEqual(mod.sugerir("quien cumple anos este mes", directorio), [])
         self.assertEqual(mod.sugerir("bastian llanoz esta hoy", directorio), [1])
+
+
+@SIN_DOCUMENTOS
+class PertenenciaTests(TestCase):
+    """Quién compone un equipo es otra pregunta que quién está disponible."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _planilla(self):
+        import openpyxl
+        carpeta = tempfile.mkdtemp()
+        wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Detalle Cuenta-Persona"
+        ws.append(["Detalle"]); ws.append([])
+        ws.append(["Cuenta / Cliente", "Persona", "Hrs", "Rut", "Apodo"])
+        ws.append(["CENCOSUD", "Rojas Ana", None, "11.111.111-1", "Mane"])
+        ws.append(["BANCO SANTANDER", "Soto Luis", None, "22.222.222-2", "Lucho"])
+        wb.save(Path(carpeta) / "cuentas.xlsx")
+        return carpeta
+
+    def _preguntar(self, texto, cliente=None):
+        return (cliente or self.client).post(
+            "/api/chat/", data=json.dumps({"message": texto}),
+            content_type="application/json").json()
+
+    def test_se_distingue_de_la_disponibilidad(self):
+        self.assertEqual(
+            intents.interpretar("quienes estan en el equipo de Cencosud", HOY)["intencion"],
+            "pertenencia")
+        self.assertEqual(
+            intents.interpretar("quien esta trabajando hoy en Cencosud", HOY)["intencion"],
+            "trabajando")
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_lista_a_los_integrantes(self, mocked):
+        with override_settings(DOCUMENTOS_DIR=self._planilla()):
+            cuerpo = self._preguntar("¿quiénes están en el equipo de CENCOSUD?")
+        self.assertEqual(cuerpo["meta"]["intencion"], "pertenencia")
+        self.assertEqual(len(cuerpo["items"]), 1)
+        self.assertIn("Ana", cuerpo["items"][0]["nombre"])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_por_una_persona_responde_si_o_no(self, mocked):
+        """"¿X está en el equipo de Y?" no pregunta si está hoy."""
+        with override_settings(DOCUMENTOS_DIR=self._planilla()):
+            si = self._preguntar("¿Ana está en el equipo de CENCOSUD?")
+            no = self._preguntar("¿Ana está en el equipo de BANCO SANTANDER?")
+        self.assertTrue(si["answer"].startswith("Sí,"))
+        self.assertTrue(no["answer"].startswith("No,"))
+        self.assertIn("CENCOSUD", no["answer"])   # dice dónde sí está
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_una_pregunta_corta_hereda_el_equipo_anterior(self, mocked):
+        cliente = self.client
+        with override_settings(DOCUMENTOS_DIR=self._planilla()):
+            self._preguntar("¿quiénes están en el equipo de CENCOSUD?", cliente)
+            segunda = self._preguntar("están disponibles", cliente)
+        self.assertEqual(segunda["meta"]["grupo_heredado"], "CENCOSUD")
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_no_hereda_si_la_pregunta_nombra_otro_equipo(self, mocked):
+        cliente = self.client
+        with override_settings(DOCUMENTOS_DIR=self._planilla()):
+            self._preguntar("¿quiénes están en el equipo de CENCOSUD?", cliente)
+            segunda = self._preguntar("¿quién está disponible en BANCO SANTANDER?", cliente)
+        self.assertIsNone(segunda["meta"].get("grupo_heredado"))
