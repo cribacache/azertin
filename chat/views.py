@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from collections import Counter
 from datetime import date
 
@@ -106,7 +107,7 @@ def _grupo_no_disponible(mensaje, personas_map, req):
     """Aviso cuando se pregunta por un grupo que no es ni area ni cuenta."""
     nombres = {p["area"] for p in personas_map.values() if p.get("area")}
     grupo = intents.detectar_grupo_desconocido(intents.normalizar(mensaje), nombres)
-    if not grupo or cuentas.buscar(mensaje):
+    if not grupo or cuentas.buscar(mensaje) is not None:
         return None
     registrar(mensaje, "sin_datos")
     return {
@@ -121,17 +122,72 @@ def _grupo_no_disponible(mensaje, personas_map, req):
     }
 
 
+def _numerar(opciones):
+    return "\n".join(f"{i}. {o}" for i, o in enumerate(opciones, 1))
+
+
 def responder_ambiguo(ids, personas_map, mensaje, req):
-    """Varios coinciden con el nombre o apodo: se pregunta cual."""
+    """Varios coinciden con el nombre o apodo: se pregunta cual.
+
+    Se numeran para que se pueda responder "2" y no haya que escribir el nombre
+    completo, y se deja el contexto pendiente para resolverlo en el mensaje
+    siguiente.
+    """
     registrar(mensaje, "persona_ambigua")
-    nombres = sorted(personas_map[i].get("nombre_completo") or personas_map[i]["nombre"]
-                     for i in ids)[:6]
+    orden = sorted(ids, key=lambda i: personas_map[i].get("nombre_completo")
+                   or personas_map[i]["nombre"])[:8]
+    nombres = [personas_map[i].get("nombre_completo") or personas_map[i]["nombre"]
+               for i in orden]
     return {
-        "answer": ("Hay varias personas que coinciden: " + ", ".join(nombres)
-                   + ". ¿Por cuál preguntas? Dime el nombre y el apellido."),
+        "answer": (f"Hay {len(nombres)} personas que coinciden. ¿Por cuál preguntas?\n"
+                   + _numerar(nombres)
+                   + "\n\nRespóndeme con el número o con el apellido."),
         "items": [],
         "meta": {"intencion": "persona_ambigua", "requests_buk": req},
+        "_pendiente": {"tipo": "persona", "ids": list(orden), "opciones": nombres,
+                       "pregunta": mensaje},
     }
+
+
+def responder_cuenta_ambigua(opciones, mensaje):
+    """Varias cuentas comparten la palabra usada ("AFP")."""
+    registrar(mensaje, "sin_datos")
+    return {
+        "answer": (f"Hay {len(opciones)} cuentas que coinciden. ¿Cuál de ellas?\n"
+                   + _numerar(opciones)
+                   + "\n\nRespóndeme con el número o con el nombre."),
+        "items": [],
+        "meta": {"intencion": "cuenta_ambigua", "requests_buk": 0},
+        "_pendiente": {"tipo": "cuenta", "opciones": list(opciones),
+                       "pregunta": mensaje},
+    }
+
+
+def elegir_opcion(respuesta, opciones):
+    """Indice elegido en una respuesta como "2", "la segunda" o "Moreno".
+
+    Devuelve None si no queda claro: insistir con la pregunta es mejor que
+    adivinar cual de cuatro personas queria.
+    """
+    texto = intents.normalizar(respuesta).strip()
+
+    numero = re.search(r"\b(\d{1,2})\b", texto)
+    if numero:
+        indice = int(numero.group(1)) - 1
+        if 0 <= indice < len(opciones):
+            return indice
+
+    ordinales = ("primera", "segunda", "tercera", "cuarta", "quinta",
+                 "sexta", "septima", "octava")
+    for i, palabra in enumerate(ordinales):
+        if palabra in texto and i < len(opciones):
+            return i
+
+    # por palabra del nombre: entre pocas opciones, "Moreno" ya distingue
+    palabras = {p for p in re.split(r"[^\w]+", texto) if len(p) >= 3}
+    coinciden = [i for i, o in enumerate(opciones)
+                 if palabras & set(intents.normalizar(o).split())]
+    return coinciden[0] if len(coinciden) == 1 else None
 
 
 def responder_ausencias(plan):
@@ -165,6 +221,8 @@ def responder_ausencias(plan):
     items = sorted((armar_item(r, personas_map) for r in registros),
                    key=lambda i: (i["desde"] or "", i["nombre"]))
     cuenta = cuentas.buscar(plan["mensaje"])
+    if cuenta and "ambiguas" in cuenta:
+        return responder_cuenta_ambigua(cuenta["ambiguas"], plan["mensaje"])
     if cuenta:
         ids = {p["id"] for p in personas_map.values()
                if cuenta["nombre"] in (p.get("cuentas") or [])}
@@ -337,6 +395,8 @@ def responder_trabajando(plan):
                                  {p["area"] for p in personas_map.values() if p.get("area")})
     equipo = list(personas_map.values())
     cuenta = cuentas.buscar(plan["mensaje"])
+    if cuenta and "ambiguas" in cuenta:
+        return responder_cuenta_ambigua(cuenta["ambiguas"], plan["mensaje"])
     if cuenta:
         equipo = _filtrar_cuenta(equipo, cuenta["nombre"])
         plan = {**plan, "etiqueta": f"{plan['etiqueta']} en {cuenta['nombre']}"}
@@ -353,8 +413,9 @@ def responder_trabajando(plan):
     if not ausentes:
         texto = f"Está el equipo completo {plan['etiqueta']}: las {total} personas en su jornada."
     else:
+        verbo = "está" if ausentes == 1 else "están"
         texto = (f"{len(presentes)} de {total} personas están en su jornada "
-                 f"{plan['etiqueta']}; {ausentes} están fuera.")
+                 f"{plan['etiqueta']}; {ausentes} {verbo} fuera.")
 
     return {
         "answer": texto,
@@ -484,6 +545,48 @@ def api_status(request):
     })
 
 
+def _sin_privados(respuesta):
+    """Quita las claves internas antes de mandar la respuesta al navegador."""
+    return {k: v for k, v in respuesta.items() if not k.startswith("_")}
+
+
+def resolver_pendiente(mensaje, pendiente, hoy):
+    """Interpreta el mensaje como respuesta a un "¿cuál de estas?" anterior.
+
+    Si se resuelve, se responde la pregunta ORIGINAL con la opcion elegida: el
+    usuario pregunto por las vacaciones de la Javi, no por el numero 2.
+    """
+    opciones = pendiente.get("opciones") or []
+    indice = elegir_opcion(mensaje, opciones)
+    if indice is None:
+        return None
+
+    pregunta = pendiente.get("pregunta") or ""
+    if pendiente.get("tipo") == "persona":
+        personas_map, req = buk.directorio()
+        pid = (pendiente.get("ids") or [None] * len(opciones))[indice]
+        if pid not in personas_map:
+            return None
+        plan = intents.interpretar(pregunta, hoy)
+        plan["mensaje"] = pregunta
+        plan.setdefault("desde", hoy)
+        plan.setdefault("hasta", hoy)
+        plan.setdefault("etiqueta", "hoy")
+        respuesta = responder_persona(plan, {pid}, personas_map)
+        respuesta["meta"]["requests_buk"] += req
+        respuesta["meta"]["desambiguado"] = True
+        return respuesta
+
+    if pendiente.get("tipo") == "cuenta":
+        # se rehace la pregunta original con el nombre completo de la cuenta
+        elegida = opciones[indice]
+        respuesta = _resolver(f"{pregunta} ({elegida})", hoy)
+        respuesta["meta"]["desambiguado"] = True
+        return respuesta
+
+    return None
+
+
 @require_POST
 def chat_message(request):
     try:
@@ -496,6 +599,18 @@ def chat_message(request):
         return JsonResponse({"error": "Escribe una pregunta"}, status=400)
 
     hoy = date.today()
+
+    # ¿Es la respuesta a un "¿cual de estas?" que quedo pendiente?
+    pendiente = request.session.get("pendiente")
+    if pendiente:
+        del request.session["pendiente"]
+        try:
+            resuelta = resolver_pendiente(mensaje, pendiente, hoy)
+        except buk.BukError as error:
+            return JsonResponse({"error": str(error)}, status=502)
+        if resuelta:
+            contar(mensaje, resuelta["meta"].get("intencion"))
+            return JsonResponse(_sin_privados(resuelta))
 
     # Misma pregunta el mismo dia: se sirve del cache, sin BUK ni tokens.
     cacheada = respuestas.obtener(mensaje, hoy)
@@ -512,7 +627,14 @@ def chat_message(request):
         return JsonResponse({"error": str(error)}, status=502)
 
     respuesta["meta"]["desde_cache"] = False
-    respuestas.guardar(mensaje, hoy, respuesta)
+    # Una pregunta que quedo esperando aclaracion no se cachea: la respuesta
+    # depende de lo que conteste el usuario, no solo del texto.
+    pendiente_nuevo = respuesta.pop("_pendiente", None)
+    if pendiente_nuevo is not None:
+        request.session["pendiente"] = pendiente_nuevo
+        request.session.set_expiry(settings.DESAMBIGUACION_SEGUNDOS)
+    else:
+        respuestas.guardar(mensaje, hoy, respuesta)
     contar(mensaje, respuesta["meta"].get("intencion"))
     return JsonResponse(respuesta)
 

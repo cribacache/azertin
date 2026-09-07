@@ -125,7 +125,7 @@ def _apodo(empleado):
     el apodo; el resto no cruza esta capa.
     """
     valor = (empleado.get("custom_attributes") or {}).get("Apodo")
-    return str(valor).strip() if valor else ""
+    return str(valor).strip() if valor and str(valor).strip() else ""
 
 
 def apodos_de(texto):

@@ -44,6 +44,7 @@ CSRF_TRUSTED_ORIGINS += [o.strip() for o in
                          os.getenv("DJANGO_CSRF_ORIGINS", "").split(",") if o.strip()]
 
 INSTALLED_APPS = [
+    "django.contrib.sessions",   # recuerda una desambiguacion entre mensajes
     "django.contrib.staticfiles",
     "chat",
 ]
@@ -53,9 +54,15 @@ DOCUMENTOS_DIR = Path(os.getenv("DOCUMENTOS_DIR", BASE_DIR / "datos"))
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
 ]
+
+# Cuanto dura una desambiguacion pendiente ("¿cual de las cuatro Javi?").
+# Corta a proposito: si el usuario cambia de tema, la siguiente pregunta no
+# debe interpretarse como respuesta a algo que ya olvido.
+DESAMBIGUACION_SEGUNDOS = int(os.getenv("DESAMBIGUACION_SEGUNDOS", "180"))
 
 ROOT_URLCONF = "config.urls"
 TEMPLATES = [

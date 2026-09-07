@@ -281,8 +281,30 @@ buscar y se muestra el primero. Se indexan desde dos letras, porque `JM` y `Jo`
 son apodos reales; las palabras cortas del idioma están en `RESERVADAS` para que
 no disparen una búsqueda de persona en cualquier frase.
 
-Los apodos se repiten —hay cuatro "Javi" en la nómina—, así que ante un apodo
-ambiguo el asistente pregunta cuál en vez de elegir una al azar.
+Si alguien no tiene apodo (15 de 98), se muestra el nombre completo sin más.
+
+### Cuando el apodo se repite
+
+Hay cinco "Javi" en la nómina. El asistente las numera y espera la aclaración:
+
+```
+usuario> ¿está la Javi hoy?
+azertin> Hay 5 personas que coinciden. ¿Por cuál preguntas?
+         1. Javiera "Javi" Almendra Narváez Ojeda
+         ...
+         4. Javiera "Javi" Ignacia Moreno Soza
+usuario> Moreno
+azertin> Javiera "Javi" Ignacia Moreno Soza tiene vacaciones del 4 al 11 de septiembre.
+```
+
+Responde la **pregunta original**, no la aclaración: preguntaste si estaba, no
+por el número 4. Acepta el número (`2`, `la 3`), el ordinal (`la segunda`) o un
+apellido.
+
+La opción pendiente vive en la sesión y dura `DESAMBIGUACION_SEGUNDOS` (180). Si
+la respuesta no aclara —`¿y quién está de vacaciones?`— no adivina: la trata
+como una pregunta nueva. Elegir al azar entre cinco personas es peor que volver
+a preguntar.
 
 ## Cuentas y clientes
 
@@ -294,10 +316,17 @@ empleados**, así que la planilla es la única fuente. Si algún día se llena e
 BUK, conviene cambiar la fuente y dejar de depender del archivo.
 
 ```
-¿quién está trabajando hoy en CENCOSUD?  → 19 de 20 en su jornada
-¿quién está de vacaciones en Mutual?     → 1 persona
-¿quién está fuera hoy en BHP?            → 1 con vacaciones
+¿quién está trabajando hoy en CENCOSUD?      → 19 de 20 en su jornada
+¿quién está de vacaciones en Mutual?         → 1 persona
+¿quién trabaja hoy en el equipo de Santander? → 8 de 9, en BANCO SANTANDER
 ```
+
+Se reconoce la cuenta de tres formas, de más a menos específica: el nombre
+completo tal cual (`aguas andinas`), una palabra que pertenece a una sola cuenta
+(`santander` → `BANCO SANTANDER`), o —si la palabra está en varias (`AFP` está
+en *AFP Capital* y *AFP Cuprum*)— preguntando cuál, igual que con los apodos.
+Palabras como `banco` o `grupo` no identifican a ninguna: 35 de las 90 cuentas
+tienen más de una palabra, y nadie dice "el equipo de BANCO SANTANDER".
 
 **El RUT es solo la llave del cruce**: se usa para unir las dos fuentes y se
 descarta antes de guardar el directorio. No queda almacenado ni sale en ninguna

@@ -96,18 +96,66 @@ def nombres():
     return sorted(v["nombre"] for v in cargar().values())
 
 
+LARGO_TOKEN = 3
+# Palabras que aparecen en varios nombres de cuenta y no identifican a ninguna.
+GENERICAS = {"banco", "grupo", "proyecto", "spa", "sa", "chile", "de", "del",
+             "la", "el", "los", "las", "y"}
+
+
+def _tokens(nombre):
+    return {t for t in _clave(nombre).split()
+            if len(t) >= LARGO_TOKEN and t not in GENERICAS}
+
+
+def _indice_tokens():
+    """Mapa {token: {claves de cuenta}} para buscar por parte del nombre."""
+    mapa = {}
+    for clave, datos in cargar().items():
+        for token in _tokens(datos["nombre"]):
+            mapa.setdefault(token, set()).add(clave)
+    return mapa
+
+
 def buscar(texto):
     """Cuenta mencionada en el texto, o None.
 
-    Se prefiere la coincidencia mas larga: "afp capital" antes que "afp".
+    Tres formas de acertar, de mas a menos especifica:
+      1. El nombre completo aparece tal cual ("aguas andinas").
+      2. Un token que pertenece a una sola cuenta ("santander" -> BANCO
+         SANTANDER). Es el caso comun: nadie dice "el equipo de BANCO
+         SANTANDER", dice "el equipo de Santander".
+      3. Si el token pertenece a varias ("afp" esta en AFP Capital, AFP Cuprum
+         y AFPs) no se elige ninguna: devuelve la ambiguedad para preguntar.
     """
+    mapa = cargar()
     plano = f" {_clave(texto)} "
-    mejor = None
-    for clave, datos in cargar().items():
-        if len(clave) >= 3 and f" {clave} " in plano:
-            if mejor is None or len(clave) > len(mejor[0]):
-                mejor = (clave, datos)
-    return mejor[1] if mejor else None
+
+    completo = None
+    for clave, datos in mapa.items():
+        if len(clave) >= LARGO_TOKEN and f" {clave} " in plano:
+            if completo is None or len(clave) > len(completo[0]):
+                completo = (clave, datos)
+    if completo:
+        return completo[1]
+
+    indice = _indice_tokens()
+    palabras = set(plano.split())
+    candidatas = set()
+    for token in palabras & set(indice):
+        candidatas |= indice[token]
+
+    if len(candidatas) == 1:
+        return mapa[next(iter(candidatas))]
+    if len(candidatas) > 1:
+        # se prefiere la que tenga mas tokens mencionados, y si empatan se
+        # devuelve la ambiguedad para que el usuario aclare
+        puntajes = {c: len(_tokens(mapa[c]["nombre"]) & palabras) for c in candidatas}
+        mejor = max(puntajes.values())
+        ganadoras = [c for c, n in puntajes.items() if n == mejor]
+        if len(ganadoras) == 1:
+            return mapa[ganadoras[0]]
+        return {"ambiguas": sorted(mapa[c]["nombre"] for c in ganadoras)}
+    return None
 
 
 def asignar(directorio):

@@ -1284,3 +1284,97 @@ class CuentasTests(TestCase):
                 content_type="application/json").json()
         self.assertEqual(cuerpo["meta"]["intencion"], "persona_ambigua")
         self.assertIn("¿Por cuál preguntas?", cuerpo["answer"])
+
+
+@SIN_DOCUMENTOS
+class DesambiguacionTests(TestCase):
+    """El bot pregunta cuál y la respuesta resuelve la pregunta original."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _decir(self, cliente, texto):
+        return cliente.post("/api/chat/", data=json.dumps({"message": texto}),
+                            content_type="application/json").json()
+
+    def _dos_iguales(self):
+        directorio, _ = buk.directorio()
+        for persona in directorio.values():
+            persona["apodo"] = "Javi"
+            persona["nombre_completo"] = buk.nombre_con_apodo(persona["nombre"], "Javi")
+        return directorio
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_responder_con_apellido_resuelve_la_pregunta_original(self, mocked):
+        cliente = self.client
+        with patch("chat.buk.directorio", return_value=(self._dos_iguales(), 0)):
+            primera = self._decir(cliente, "¿está la Javi hoy?")
+            self.assertEqual(primera["meta"]["intencion"], "persona_ambigua")
+            segunda = self._decir(cliente, "Soto")
+        self.assertEqual(segunda["meta"]["intencion"], "persona")
+        self.assertTrue(segunda["meta"]["desambiguado"])
+        self.assertIn("Soto", segunda["answer"])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_responder_con_numero(self, mocked):
+        cliente = self.client
+        with patch("chat.buk.directorio", return_value=(self._dos_iguales(), 0)):
+            self._decir(cliente, "¿está la Javi hoy?")
+            segunda = self._decir(cliente, "la 1")
+        self.assertEqual(segunda["meta"]["intencion"], "persona")
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_una_respuesta_que_no_aclara_no_adivina(self, mocked):
+        """Adivinar entre cuatro personas es peor que volver a preguntar."""
+        cliente = self.client
+        with patch("chat.buk.directorio", return_value=(self._dos_iguales(), 0)):
+            self._decir(cliente, "¿está la Javi hoy?")
+            segunda = self._decir(cliente, "¿y quién está de vacaciones?")
+        self.assertNotEqual(segunda["meta"].get("intencion"), "persona")
+        self.assertFalse(segunda["meta"].get("desambiguado"))
+
+    def test_elegir_opcion_entiende_numero_ordinal_y_apellido(self):
+        from chat.views import elegir_opcion
+        opciones = ["Javiera Ignacia González Lira", "Javiera Ignacia Moreno Soza"]
+        self.assertEqual(elegir_opcion("2", opciones), 1)
+        self.assertEqual(elegir_opcion("la segunda", opciones), 1)
+        self.assertEqual(elegir_opcion("Moreno", opciones), 1)
+        self.assertEqual(elegir_opcion("González", opciones), 0)
+        self.assertIsNone(elegir_opcion("no sé", opciones))
+        self.assertIsNone(elegir_opcion("Javiera", opciones))   # las dos coinciden
+
+
+class CuentaPorTokenTests(TestCase):
+    """"El equipo de Santander" debe encontrar "BANCO SANTANDER"."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _planilla(self, nombres):
+        import openpyxl
+        carpeta = tempfile.mkdtemp()
+        wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Detalle Cuenta-Persona"
+        ws.append(["Detalle"]); ws.append([])
+        ws.append(["Cuenta / Cliente", "Persona", "Hrs", "Rut", "Apodo"])
+        for i, nombre in enumerate(nombres):
+            ws.append([nombre, f"Persona {i}", None, f"{i}.111.111-1", None])
+        wb.save(Path(carpeta) / "cuentas.xlsx")
+        return carpeta
+
+    def test_encuentra_por_una_palabra_distintiva(self):
+        from chat import cuentas
+        with override_settings(DOCUMENTOS_DIR=self._planilla(["BANCO SANTANDER", "CENCOSUD"])):
+            self.assertEqual(cuentas.buscar("el equipo de Santander")["nombre"],
+                             "BANCO SANTANDER")
+
+    def test_si_la_palabra_es_de_varias_cuentas_pregunta(self):
+        from chat import cuentas
+        with override_settings(DOCUMENTOS_DIR=self._planilla(["AFP Capital", "AFP Cuprum"])):
+            resultado = cuentas.buscar("gente de AFP")
+            self.assertEqual(resultado["ambiguas"], ["AFP Capital", "AFP Cuprum"])
+            self.assertEqual(cuentas.buscar("gente de AFP Cuprum")["nombre"], "AFP Cuprum")
+
+    def test_las_palabras_genericas_no_identifican(self):
+        from chat import cuentas
+        with override_settings(DOCUMENTOS_DIR=self._planilla(["BANCO SANTANDER", "BANCO ESTADO"])):
+            self.assertIsNone(cuentas.buscar("el equipo del banco"))
