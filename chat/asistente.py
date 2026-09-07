@@ -37,21 +37,46 @@ Reglas:
 - Responde en espanol de Chile.
 - Texto plano: nada de markdown, negritas ni asteriscos. La interfaz los muestra
   tal cual. Para enumerar personas usa una linea por persona con guion.
-- Si no puedes responder con las herramientas, dilo claramente en una frase.
 - Ante un saludo o una cortesia, responde con naturalidad en una linea y ofrece
   ayuda. No llames herramientas ni digas que te falta informacion.
 - Si el mensaje trae un bloque DATOS YA CONSULTADOS, usalo directamente en vez
   de volver a pedir lo mismo con una herramienta. Llama a una herramienta solo
   si necesitas algo que no este ahi.
 - "Quien es X", "que cuentas maneja X" y "que clientes maneja X" son la misma
-  pregunta: usa `info_persona`, no `ausencias_de_persona`.
+  pregunta: usa `info_persona`, no `ausencias_de_persona`. "Quien es del
+  equipo/cuenta de Y" y "muestrame el equipo que atiende Y" van con
+  `equipo_de`, no con `info_persona`.
 - Tienes el historial de esta conversacion. Usalo para entender preguntas de
   seguimiento ("y sus vacaciones?", "y el segundo?") sin pedir que repitan el
   nombre.
+- Si ninguna herramienta te da lo que piden, o el resultado dice
+  "encontrada": false / "encontrado": false, NO improvises una respuesta
+  parecida ni la contestes con generalidades: es preferible decir que no
+  sabes. En ese caso, y SOLO en ese caso, tu respuesta debe empezar
+  exactamente con "NO_SE:" (sin nada antes, ni siquiera un saludo), seguido
+  de una frase breve. Ejemplo: "NO_SE: No tengo esa informacion todavia."
+  Esta marca no la ve el usuario: el sistema la usa para registrar la
+  pregunta y mejorar mas adelante. Nunca la uses si SI pudiste responder.
 """
 
 MAX_TURNOS_HISTORIAL = 6  # 3 idas y vueltas: alcanza para el seguimiento sin
                           # inflar cada llamada con toda la conversacion.
+
+MARCA_SIN_DATOS = "NO_SE:"
+
+
+def _separar_exito(texto):
+    """Quita la marca de "no se" y dice si el modelo pudo responder.
+
+    Sin una marca explicita, "no tengo esa informacion" en texto libre es
+    indistinguible de una respuesta real para el resto del sistema: no se
+    podria registrar como consulta pendiente ni separarla en las metricas de
+    una respuesta que si sirvio.
+    """
+    limpio = (texto or "").strip()
+    if limpio.upper().startswith(MARCA_SIN_DATOS):
+        return limpio[len(MARCA_SIN_DATOS):].strip(), False
+    return limpio, True
 
 
 def _con_contexto(mensaje, contexto, alias):
@@ -246,11 +271,12 @@ def _responder_gemini(mensaje, hoy, contexto=None, historial_previo=None, alias=
             texto = (respuesta.text or "").strip()
             if settings.ASISTENTE_ANONIMIZAR:
                 texto = _restaurar(texto, alias)
+            texto, exitosa = _separar_exito(texto)
             nuevo_historial = (historial_previo or []) + [
                 {"role": "user", "texto": mensaje_actual},
                 {"role": "model", "texto": texto},
             ]
-            meta = {"pasos": pasos, "herramientas": llamadas,
+            meta = {"pasos": pasos, "herramientas": llamadas, "exitosa": exitosa,
                     "historial": nuevo_historial[-MAX_TURNOS_HISTORIAL:], "alias": alias}
             return texto, meta
 
@@ -312,7 +338,8 @@ def _responder_openai(mensaje, hoy, contexto=None):
             texto = (eleccion.content or "").strip()
             if settings.ASISTENTE_ANONIMIZAR:
                 texto = _restaurar(texto, alias)
-            return texto, {"pasos": pasos, "herramientas": llamadas}
+            texto, exitosa = _separar_exito(texto)
+            return texto, {"pasos": pasos, "herramientas": llamadas, "exitosa": exitosa}
 
         mensajes.append(eleccion.model_dump(exclude_none=True))
         for llamada in eleccion.tool_calls:

@@ -47,7 +47,7 @@ function quitarVacio() {
   }
 }
 
-function addMessage(text, type, items = null, meta = null) {
+function addMessage(text, type, items = null, meta = null, pregunta = null) {
   quitarVacio();
   const item = document.createElement("div");
   item.className = `message ${type}`;
@@ -94,10 +94,51 @@ function addMessage(text, type, items = null, meta = null) {
     cuerpo.appendChild(tag);
   }
 
+  // Boton de retroalimentacion: solo en respuestas reales del bot, no en un
+  // saludo ("Hola.") ni en el mensaje del propio usuario. Sirve para separar,
+  // de las preguntas que el bot contesto con confianza, cuales en realidad
+  // estaban mal: esa es la senal mas util para saber que programar despues.
+  if (type === "bot" && pregunta && meta && meta.intencion !== "cortesia") {
+    const feedback = document.createElement("div");
+    feedback.className = "feedback";
+    feedback.innerHTML =
+      `<span class="feedback-pregunta">¿Te sirvió esta respuesta?</span>` +
+      `<button type="button" class="fb-si" aria-label="Sí me sirvió">👍</button>` +
+      `<button type="button" class="fb-no" aria-label="No me sirvió">👎</button>`;
+    feedback.dataset.pregunta = pregunta;
+    cuerpo.appendChild(feedback);
+  }
+
   messages.appendChild(item);
   alFinal();
   return item;
 }
+
+// Delegado en el contenedor: los botones se crean despues de este listener,
+// uno por cada respuesta que llega.
+messages.addEventListener("click", async (event) => {
+  const boton = event.target.closest(".fb-si, .fb-no");
+  if (!boton) return;
+  const feedback = boton.closest(".feedback");
+  const pregunta = feedback && feedback.dataset.pregunta;
+  if (!pregunta || feedback.dataset.enviado) return;
+
+  const exitosa = boton.classList.contains("fb-si");
+  feedback.dataset.enviado = "1";
+  feedback.dataset.resultado = exitosa ? "si" : "no";
+  feedback.querySelector(".feedback-pregunta").textContent =
+    exitosa ? "Gracias por confirmarlo." : "Gracias, quedó registrada para revisarla.";
+
+  try {
+    await fetch("/api/feedback/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken },
+      body: JSON.stringify({ message: pregunta, exitosa }),
+    });
+  } catch (_) {
+    // El feedback es secundario: si falla el envio, no interrumpe el chat.
+  }
+});
 
 function mostrarEscribiendo() {
   quitarVacio();
@@ -149,7 +190,7 @@ form.addEventListener("submit", async (event) => {
     const result = await response.json();
     escribiendo.remove();
     if (!response.ok) throw new Error(result.error);
-    addMessage(result.answer, "bot", result.items, result.meta);
+    addMessage(result.answer, "bot", result.items, result.meta, message);
     // apenada si tuvo que responder de respaldo, contenta si salió bien
     estadoMascota(result.meta && result.meta.parcial ? "apenado" : "feliz", 2200);
   } catch (error) {

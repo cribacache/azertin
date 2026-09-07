@@ -1773,3 +1773,102 @@ class PoliticaVacacionesDocTests(TestCase):
         contenido = origen.read_text(encoding="utf-8").lower()
         self.assertNotIn("@gmail.com", contenido)
         self.assertNotIn("12.454.685-0", contenido)
+
+
+class MarcaNoSeTests(TestCase):
+    """Si el modelo no puede responder, tiene que decirlo con la marca NO_SE,
+    no con una frase cualquiera que se confunda con una respuesta real."""
+
+    def test_separa_la_marca_y_el_texto(self):
+        from chat.asistente import _separar_exito
+        texto, exitosa = _separar_exito("NO_SE: No tengo esa información.")
+        self.assertFalse(exitosa)
+        self.assertEqual(texto, "No tengo esa información.")
+
+    def test_sin_marca_es_exito(self):
+        from chat.asistente import _separar_exito
+        texto, exitosa = _separar_exito("Ana está en Cencosud.")
+        self.assertTrue(exitosa)
+        self.assertEqual(texto, "Ana está en Cencosud.")
+
+    def test_la_marca_no_distingue_mayusculas(self):
+        from chat.asistente import _separar_exito
+        _, exitosa = _separar_exito("no_se: no tengo ese dato.")
+        self.assertFalse(exitosa)
+
+
+@override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba",
+                   ASISTENTE_SIEMPRE=True)
+class RespuestaNoExitosaTests(TestCase):
+    """Cuando el modelo se rinde, la pregunta queda registrada como 'sin
+    datos' y el usuario nunca ve el texto crudo de la marca."""
+
+    def setUp(self):
+        cache.clear()
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_se_registra_como_sin_datos_y_no_se_muestra_la_marca(self, mock_cliente, mock_buk):
+        from chat.models import ConsultaNoResuelta
+        mock_cliente.return_value.models.generate_content.return_value = _respuesta_gemini(
+            texto="NO_SE: No tengo acceso a esa información.")
+
+        cuerpo = self.client.post(
+            "/api/chat/", data='{"message":"cuanto gano yo el mes pasado?"}',
+            content_type="application/json",
+        ).json()
+
+        self.assertNotIn("NO_SE", cuerpo["answer"])
+        self.assertNotEqual(cuerpo["meta"]["intencion"], "modelo")
+        fila = ConsultaNoResuelta.objects.get()
+        self.assertEqual(fila.motivo, "sin_datos")
+        self.assertEqual(fila.veces, 1)  # no se registra dos veces la misma
+        # el modelo ya dijo que no sabe: no vale la pena volver a llamarlo
+        self.assertEqual(mock_cliente.return_value.models.generate_content.call_count, 1)
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_si_pudo_responder_no_se_registra(self, mock_cliente, mock_buk):
+        from chat.models import ConsultaNoResuelta
+        mock_cliente.return_value.models.generate_content.return_value = _respuesta_gemini(
+            texto="Todo bien por aquí.")
+
+        self.client.post("/api/chat/", data='{"message":"como estas?"}',
+                         content_type="application/json")
+
+        self.assertEqual(ConsultaNoResuelta.objects.count(), 0)
+
+
+class FeedbackTests(TestCase):
+    """El boton de pulgar abajo bajo cada respuesta."""
+
+    def setUp(self):
+        cache.clear()
+
+    def test_marcar_como_no_exitosa_la_registra(self):
+        from chat.models import ConsultaNoResuelta
+        respuesta = self.client.post(
+            "/api/feedback/",
+            data=json.dumps({"message": "quien es Ana Rojas?", "exitosa": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(respuesta.status_code, 200)
+        fila = ConsultaNoResuelta.objects.get()
+        self.assertEqual(fila.motivo, "marcada_no_exitosa")
+        self.assertEqual(fila.mensaje, "quien es Ana Rojas?")
+
+    def test_marcar_como_exitosa_no_registra_nada(self):
+        from chat.models import ConsultaNoResuelta
+        self.client.post(
+            "/api/feedback/",
+            data=json.dumps({"message": "quien es Ana Rojas?", "exitosa": True}),
+            content_type="application/json",
+        )
+        self.assertEqual(ConsultaNoResuelta.objects.count(), 0)
+
+    def test_sin_mensaje_responde_error(self):
+        respuesta = self.client.post(
+            "/api/feedback/", data=json.dumps({"exitosa": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(respuesta.status_code, 400)

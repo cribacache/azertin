@@ -13,6 +13,10 @@ class ConsultaNoResuelta(models.Model):
         ("sin_datos", "Se entendio, pero no hay datos"),
         ("persona_desconocida", "Se nombro a alguien que no esta en la nomina"),
         ("persona_ambigua", "El nombre coincide con varias personas"),
+        # El modelo dijo que si sabia y el usuario dice que no: es la senal mas
+        # valiosa de las cuatro, porque es una respuesta CONFIADA y equivocada,
+        # no una que ya se supiera pendiente.
+        ("marcada_no_exitosa", "El usuario marco la respuesta como no exitosa"),
     ]
 
     mensaje = models.TextField()

@@ -281,6 +281,42 @@ body::after {
 .message.bot:has(.meta-tag[data-respaldo]) .avatar { border-color: rgba(55,145,195,.5); color: var(--azul); }
 .meta-tag[data-respaldo] { color: var(--azul); }
 
+/* ---------- feedback ---------- */
+.feedback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--linea);
+}
+
+.feedback-pregunta {
+  font-size: 10.5px;
+  color: var(--gris-claro);
+  margin-right: 2px;
+}
+
+.feedback button {
+  border: 1px solid var(--linea);
+  background: transparent;
+  border-radius: 999px;
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform .12s ease, border-color .12s ease, opacity .12s ease;
+}
+
+.feedback button:hover { transform: scale(1.12); border-color: var(--rosado); }
+.feedback button:focus-visible { outline: 2px solid var(--rosado); outline-offset: 2px; }
+
+.feedback[data-enviado] button { pointer-events: none; }
+.feedback[data-resultado="si"] .fb-no { opacity: .3; }
+.feedback[data-resultado="no"] .fb-si { opacity: .3; }
+.feedback[data-resultado="no"] .feedback-pregunta { color: var(--rosado); }
+
 /* ---------- escribiendo ---------- */
 .typing { display: flex; gap: 5px; padding: 11px 0 0; }
 

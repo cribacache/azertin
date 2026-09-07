@@ -654,6 +654,17 @@ def responder_con_modelo(mensaje, contexto=None, historial=None, alias=None):
 
     if not texto:
         return None
+
+    if meta.get("exitosa") is False:
+        # El propio modelo dijo, con la marca NO_SE, que no pudo responder.
+        # No se muestra ese texto tal cual, se registra como consulta
+        # pendiente. Se devuelve False (no None) para que el modo "todo por
+        # el modelo" pueda distinguir esto de "no habia modelo disponible":
+        # aca no tiene sentido reintentar con las reglas y volver a llamar al
+        # modelo una segunda vez, el mismo modelo ya dijo que no sabe.
+        registrar(mensaje, "sin_datos")
+        return False
+
     return {
         "answer": texto,
         "items": [],
@@ -672,8 +683,12 @@ def responder_con_modelo(mensaje, contexto=None, historial=None, alias=None):
     }
 
 
-def responder_sin_datos(mensaje):
-    registrar(mensaje, "sin_intencion")
+def responder_sin_datos(mensaje, ya_registrada=False):
+    """El mensaje generico de "no se". `ya_registrada` evita registrar dos
+    veces la misma pregunta cuando quien llama (el modo todo-por-el-modelo)
+    ya la guardo con un motivo mas especifico, como "sin_datos"."""
+    if not ya_registrada:
+        registrar(mensaje, "sin_intencion")
     return {
         "answer": (
             "Todavía no tengo esa información. Dejé registrada tu consulta para "
@@ -688,6 +703,29 @@ def responder_sin_datos(mensaje):
 
 def chat_page(request):
     return render(request, "chat/index.html")
+
+
+@require_POST
+def api_feedback(request):
+    """El boton de pulgar abajo en una respuesta: la marca como no exitosa.
+
+    Es la senal mas valiosa de las tres que guarda ConsultaNoResuelta: el
+    modelo (o las reglas) contestaron con total confianza y quien pregunto
+    dice que estaba mal. Eso es lo que hay que revisar primero.
+    """
+    try:
+        body = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "El mensaje no tiene un formato valido"}, status=400)
+
+    mensaje = str(body.get("message", "")).strip()
+    if not mensaje:
+        return JsonResponse({"error": "Falta la pregunta original"}, status=400)
+
+    if not bool(body.get("exitosa", True)):
+        registrar(mensaje, "marcada_no_exitosa")
+
+    return JsonResponse({"ok": True})
 
 
 @require_GET
@@ -978,6 +1016,13 @@ def _resolver(mensaje, hoy, historial=None, alias=None):
         del_modelo = responder_con_modelo(mensaje, historial=historial, alias=alias)
         if del_modelo:
             return del_modelo
+        if del_modelo is False:
+            # El modelo lo intento con todas sus herramientas y dijo que no
+            # sabe: no vale la pena repetir la pregunta con las reglas (tienen
+            # los mismos datos) ni gastar una segunda llamada al modelo mas
+            # abajo en este mismo metodo. Ya quedo registrada como "sin_datos"
+            # dentro de responder_con_modelo.
+            return responder_sin_datos(mensaje, ya_registrada=True)
 
     # Comparaciones, agregaciones o filtros que las reglas no saben resolver.
     # Antes contestaban una lista equivocada; ahora las toma el modelo, y si no
