@@ -255,6 +255,61 @@ preguntar por "este mes" el día 7, uno del día 6 se marca "ya pasó" en vez de
 `¿quién está trabajando hoy?`, `¿está todo el equipo?`. Es la nómina menos los
 ausentes, y acepta filtro por área.
 
+## Apodos
+
+La gente pregunta por el apodo mucho más que por el nombre completo. El apodo
+sale de BUK (`custom_attributes.Apodo`, 83 de 98 lo tienen), no de la planilla:
+donde ambos lo traen coinciden exactamente, BUK cubre más y está vivo.
+
+**De `custom_attributes` solo se lee el apodo.** Ese campo también trae contacto
+de emergencia con teléfono, restricción alimentaria, inclusión y nivel de
+inglés; nada de eso cruza `chat/buk.py`.
+
+Los nombres se muestran como **primer nombre, apodo entre comillas, resto**:
+
+```
+María "Mane" José Peña Gutiérrez
+Javiera "Javi" Ignacia Moreno Soza
+```
+
+Si el apodo ya está en el nombre se omite: `Felipe Edwards Marin`, no
+`Felipe "Felipe" Edwards Marin`. La comparación es por palabra completa, porque
+"Javi" está dentro de "Javiera" pero es un apodo distinto que sí hay que mostrar.
+
+Un campo puede traer varios (`Jose, JM` · `Ali o Alice`): se indexan todos para
+buscar y se muestra el primero. Se indexan desde dos letras, porque `JM` y `Jo`
+son apodos reales; las palabras cortas del idioma están en `RESERVADAS` para que
+no disparen una búsqueda de persona en cualquier frase.
+
+Los apodos se repiten —hay cuatro "Javi" en la nómina—, así que ante un apodo
+ambiguo el asistente pregunta cuál en vez de elegir una al azar.
+
+## Cuentas y clientes
+
+`datos/Personas Hrs Sem x Cuenta.xlsx`, hoja *Detalle Cuenta-Persona*: 90
+cuentas y 548 asignaciones. Se cruza con BUK por RUT.
+
+BUK tiene un campo `Cuentas` en `custom_attributes` pero está **vacío en los 98
+empleados**, así que la planilla es la única fuente. Si algún día se llena en
+BUK, conviene cambiar la fuente y dejar de depender del archivo.
+
+```
+¿quién está trabajando hoy en CENCOSUD?  → 19 de 20 en su jornada
+¿quién está de vacaciones en Mutual?     → 1 persona
+¿quién está fuera hoy en BHP?            → 1 con vacaciones
+```
+
+**El RUT es solo la llave del cruce**: se usa para unir las dos fuentes y se
+descarta antes de guardar el directorio. No queda almacenado ni sale en ninguna
+respuesta, y hay un test que lo verifica.
+
+La planilla no entra al corpus de documentos: `.xlsx` no está en `EXTENSIONES`
+justamente porque trae RUTs y horas contractuales.
+
+Si se pregunta por un grupo que no es ni área ni cuenta (`el equipo de
+Santander`), el asistente lo dice y ofrece lo que sí tiene, en vez de responder
+por toda la empresa ignorando el filtro.
+
 ## Filtro por área
 
 Las áreas salen de `/areas` y se cruzan con `current_job.area_id`:

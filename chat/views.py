@@ -8,7 +8,7 @@ from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
-from . import asistente, buk, documentos, intents, personas, respuestas
+from . import asistente, buk, cuentas, documentos, intents, personas, respuestas
 from .models import contar, registrar
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,8 @@ def armar_item(registro, personas_map):
     cfg = buk.CATEGORIAS.get(registro["categoria"], {})
     return {
         "id": registro["employee_id"],
-        "nombre": persona.get("nombre") or f"Empleado #{registro['employee_id']}",
+        "nombre": (persona.get("nombre_completo") or persona.get("nombre")
+                   or f"Empleado #{registro['employee_id']}"),
         "cargo": persona.get("cargo") or "",
         "area": persona.get("area") or "",
         "tipo": cfg.get("etiqueta", registro["categoria"]),
@@ -59,7 +60,7 @@ def responder_persona(plan, ids, personas_map):
                                plan.get("subtipo"))
     pid = next(iter(ids))
     persona = personas_map.get(pid, {})
-    nombre = persona.get("nombre", f"Empleado #{pid}")
+    nombre = persona.get("nombre_completo") or persona.get("nombre", f"Empleado #{pid}")
     suyos = sorted((r for r in registros if r["employee_id"] == pid),
                    key=lambda r: r["start_date"] or "")
     etiqueta = plan["etiqueta"]
@@ -96,22 +97,40 @@ def _filtrar_area(items, area):
     return [i for i in items if clave in intents.normalizar(i.get("area") or i.get("cargo") or "")]
 
 
+def _filtrar_cuenta(gente, cuenta):
+    """Se compara por nombre de cuenta, que es lo que quedo en el directorio."""
+    return [p for p in gente if cuenta in (p.get("cuentas") or [])]
+
+
 def _grupo_no_disponible(mensaje, personas_map, req):
-    """Respuesta cuando se pregunta por un cliente o cuenta, que BUK no guarda."""
+    """Aviso cuando se pregunta por un grupo que no es ni area ni cuenta."""
     nombres = {p["area"] for p in personas_map.values() if p.get("area")}
     grupo = intents.detectar_grupo_desconocido(intents.normalizar(mensaje), nombres)
-    if not grupo:
+    if not grupo or cuentas.buscar(mensaje):
         return None
     registrar(mensaje, "sin_datos")
     return {
         "answer": (
-            f"No tengo la asignación por cliente o cuenta, así que no puedo "
-            f"filtrar por «{grupo}». BUK guarda el área, no el equipo comercial. "
-            f"Las áreas que sí puedo consultar son: "
-            f"{', '.join(sorted(nombres))}."
+            f"No encuentro «{grupo}» ni entre las áreas ni entre las cuentas. "
+            f"Las áreas son: {', '.join(sorted(nombres))}. "
+            f"Las cuentas están en la planilla de asignación; si la cuenta es "
+            f"nueva, hay que actualizarla ahí."
         ),
         "items": [],
         "meta": {"intencion": "grupo_desconocido", "grupo": grupo, "requests_buk": req},
+    }
+
+
+def responder_ambiguo(ids, personas_map, mensaje, req):
+    """Varios coinciden con el nombre o apodo: se pregunta cual."""
+    registrar(mensaje, "persona_ambigua")
+    nombres = sorted(personas_map[i].get("nombre_completo") or personas_map[i]["nombre"]
+                     for i in ids)[:6]
+    return {
+        "answer": ("Hay varias personas que coinciden: " + ", ".join(nombres)
+                   + ". ¿Por cuál preguntas? Dime el nombre y el apellido."),
+        "items": [],
+        "meta": {"intencion": "persona_ambigua", "requests_buk": req},
     }
 
 
@@ -145,7 +164,13 @@ def responder_ausencias(plan):
     registros, req = buk.fuera(plan["desde"], plan["hasta"], categoria, subtipo)
     items = sorted((armar_item(r, personas_map) for r in registros),
                    key=lambda i: (i["desde"] or "", i["nombre"]))
-    if area:
+    cuenta = cuentas.buscar(plan["mensaje"])
+    if cuenta:
+        ids = {p["id"] for p in personas_map.values()
+               if cuenta["nombre"] in (p.get("cuentas") or [])}
+        items = [i for i in items if i["id"] in ids]
+        etiqueta = f"{etiqueta} en {cuenta['nombre']}"
+    elif area:
         items = _filtrar_area(items, area)
         etiqueta = f"{etiqueta} en {area}"
 
@@ -287,7 +312,7 @@ def _item_cumple(persona):
         cuando = f"en {faltan} días"
     return {
         "id": persona["id"],
-        "nombre": persona["nombre"],
+        "nombre": persona.get("nombre_completo") or persona["nombre"],
         "cargo": " · ".join(x for x in (persona.get("cargo"), persona.get("area")) if x),
         "tipo": "cumpleaños",
         "detalle": "",
@@ -311,7 +336,11 @@ def responder_trabajando(plan):
     area = intents.detectar_area(intents.normalizar(plan["mensaje"]),
                                  {p["area"] for p in personas_map.values() if p.get("area")})
     equipo = list(personas_map.values())
-    if area:
+    cuenta = cuentas.buscar(plan["mensaje"])
+    if cuenta:
+        equipo = _filtrar_cuenta(equipo, cuenta["nombre"])
+        plan = {**plan, "etiqueta": f"{plan['etiqueta']} en {cuenta['nombre']}"}
+    elif area:
         equipo = _filtrar_area(equipo, area)
         plan = {**plan, "etiqueta": f"{plan['etiqueta']} en {area}"}
 
@@ -569,6 +598,10 @@ def _resolver(mensaje, hoy):
             )
             respuesta["meta"]["requests_buk"] += req_dir
             return respuesta
+        if len(ids) > 1:
+            # Un apodo puede repetirse: hay dos "Javi" en la nomina. Preguntar
+            # cual es mejor que elegir una al azar o rendirse.
+            return responder_ambiguo(ids, personas_map, mensaje, req_dir)
     except buk.BukError:
         pass  # sin BUK igual se puede responder desde los documentos
 

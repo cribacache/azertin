@@ -11,6 +11,7 @@ asi que se usa como limite inferior con un margen mayor a la vacacion mas larga
 registrada (58 dias) y el solapamiento real se resuelve aca.
 """
 
+import re
 from datetime import date
 
 import requests
@@ -43,7 +44,7 @@ MEDIA_JORNADA = ("start_working_day", "end_working_day")
 
 # Del cumpleanos solo se guarda "MM-DD". El anio revela la edad, que no hace
 # falta para saludar a nadie y es un dato sensible: no cruza esta capa.
-CAMPOS_PUBLICOS_DOC = ("id", "nombre", "cargo", "area", "cumple")
+CAMPOS_PUBLICOS_DOC = ("id", "nombre", "apodo", "cargo", "area", "cumple")
 
 # Campos que pueden salir del backend. El endpoint de empleados expone rut,
 # direccion, cuenta bancaria, salud y prevision; nada de eso cruza esta capa.
@@ -102,12 +103,55 @@ def _paginar(path, params=None, max_paginas=25):
     return registros, hechos
 
 
+def _rut(empleado):
+    """RUT normalizado, solo como llave de cruce interna."""
+    valor = empleado.get("rut") or empleado.get("document_number") or ""
+    return str(valor).replace(".", "").replace("-", "").strip().lower()
+
+
 def _nombre(empleado):
     nombre = (empleado.get("full_name") or "").strip()
     if nombre:
         return nombre
     partes = [empleado.get("first_name"), empleado.get("surname")]
     return " ".join(p for p in partes if p).strip() or f"Empleado #{empleado.get('id')}"
+
+
+def _apodo(empleado):
+    """Apodo desde custom_attributes.
+
+    OJO: custom_attributes tambien trae contacto de emergencia con telefono,
+    restriccion alimentaria, inclusion y nivel de ingles. De todo eso solo sale
+    el apodo; el resto no cruza esta capa.
+    """
+    valor = (empleado.get("custom_attributes") or {}).get("Apodo")
+    return str(valor).strip() if valor else ""
+
+
+def apodos_de(texto):
+    """Un mismo campo puede traer varios: "Jose, JM", "Ali o Alice"."""
+    if not texto:
+        return []
+    partes = re.split(r"\s*(?:,|/|\bo\b)\s*", texto, flags=re.IGNORECASE)
+    return [p.strip() for p in partes if p.strip()]
+
+
+def nombre_con_apodo(nombre, apodo):
+    """Primer nombre, apodo entre comillas, y el resto: Maria "Mane" Jose Pena.
+
+    Si el apodo ya esta dentro del nombre (Felipe, apodo "Felipe") se omite:
+    repetirlo no aporta y se lee raro.
+    """
+    partes = (nombre or "").split()
+    principal = (apodos_de(apodo) or [""])[0]
+    if not principal or len(partes) < 2:
+        return nombre
+    from .intents import normalizar
+    # por palabra completa, no por substring: "Javi" esta dentro de "Javiera"
+    # pero es un apodo distinto y hay que mostrarlo
+    if re.search(rf"\b{re.escape(normalizar(principal))}\b", normalizar(nombre)):
+        return nombre
+    return f'{partes[0]} "{principal}" {" ".join(partes[1:])}'
 
 
 def _cumple(empleado):
@@ -142,7 +186,7 @@ def _cargo(empleado):
 def directorio(forzar=False):
     """Mapa {id: {id, nombre, cargo, area, cumple}} de activos, cacheado."""
     if not forzar:
-        cacheado = cache.get("buk:directorio:v2")
+        cacheado = cache.get("buk:directorio:v3")
         if cacheado is not None:
             return cacheado, 0
 
@@ -157,14 +201,25 @@ def directorio(forzar=False):
         if not isinstance(emp, dict) or emp.get("id") is None:
             continue
         area_id = (emp.get("current_job") or {}).get("area_id")
+        apodo = _apodo(emp)
+        nombre = _nombre(emp)
         mapa[emp["id"]] = {
             "id": emp["id"],
-            "nombre": _nombre(emp),
+            "nombre": nombre,
+            "apodo": apodo,
+            # como se muestra al usuario: Maria "Mane" Jose Pena Gutierrez
+            "nombre_completo": nombre_con_apodo(nombre, apodo),
             "cargo": _cargo(emp),
             "area": nombres_area.get(area_id, ""),
             "cumple": _cumple(emp),
+            # el rut solo sirve para cruzar con el Excel de cuentas; se descarta
+            # apenas se arma ese cruce y nunca sale en una respuesta
+            "_rut": _rut(emp),
         }
-    cache.set("buk:directorio:v2", mapa, settings.BUK_CACHE_TTL)
+    from . import cuentas
+    cuentas.asignar(mapa)
+
+    cache.set("buk:directorio:v3", mapa, settings.BUK_CACHE_TTL)
     return mapa, hechos
 
 

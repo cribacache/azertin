@@ -21,6 +21,10 @@ from .intents import normalizar
 
 logger = logging.getLogger(__name__)
 
+# La planilla de cuentas (.xlsx) NO va aca a proposito: trae RUTs y horas
+# contractuales. Se lee estructurada en chat/cuentas.py, que solo toma la
+# cuenta y el RUT como llave de cruce. Agregar ".xlsx" meteria esos datos al
+# corpus de busqueda y podrian aparecer citados en una respuesta.
 EXTENSIONES = (".md", ".txt", ".pdf")
 IGNORADOS = ("leeme", "readme")  # documentacion del repo, no contenido consultable
 MINIMO_SECCION = 120  # menos que esto es un encabezado, no una respuesta

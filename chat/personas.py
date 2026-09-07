@@ -22,6 +22,9 @@ RESERVADAS = {
 # Tres letras porque hay nombres reales asi de cortos (Ana, Paz, Ian) y
 # apellidos por los que la gente pregunta (Duk).
 LARGO_MINIMO = 3
+# Los apodos se indexan desde dos letras porque "JM" y "Jo" son apodos reales;
+# las palabras cortas del idioma quedan en RESERVADAS para que no interfieran.
+LARGO_MINIMO_APODO = 2
 
 
 def _tokens(texto):
@@ -30,12 +33,23 @@ def _tokens(texto):
 
 
 def indice(directorio):
-    """Mapa {token de nombre: {ids}} a partir del directorio."""
+    """Mapa {token: {ids}} con nombres y apodos.
+
+    La gente pregunta por el apodo mucho mas que por el nombre completo: "esta
+    la Mane?" es mas comun que "esta Maria Jose Pena Gutierrez?".
+    """
+    from .buk import apodos_de
+
     mapa = {}
     for pid, persona in directorio.items():
-        for token in _tokens(persona.get("nombre", "")):
-            if len(token) >= LARGO_MINIMO and token not in RESERVADAS:
-                mapa.setdefault(token, set()).add(pid)
+        textos = [persona.get("nombre", "")] + apodos_de(persona.get("apodo"))
+        for texto in textos:
+            for token in _tokens(texto):
+                # los apodos son cortos ("Eli", "JM"), asi que se permite menos
+                # largo que en los nombres, pero nunca menos de tres letras
+                minimo = LARGO_MINIMO_APODO if texto != persona.get("nombre", "") else LARGO_MINIMO
+                if len(token) >= minimo and token not in RESERVADAS:
+                    mapa.setdefault(token, set()).add(pid)
     return mapa
 
 

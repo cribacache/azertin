@@ -5,3 +5,4 @@ openai>=1.0,<4.0
 google-genai>=1.0,<3.0
 Pillow>=11.0,<13.0  # solo para preparar assets, no lo usa la app en runtime
 pymupdf>=1.24,<2.0
+openpyxl>=3.1,<4.0  # lee la planilla de cuentas

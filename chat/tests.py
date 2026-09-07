@@ -25,10 +25,14 @@ EMPLEADOS = {
     "data": [
         {"id": 335, "full_name": "Ana Rojas", "rut": "11.111.111-1",
          "birthday": "1979-" + _f(3)[5:],
+         "custom_attributes": {"Apodo": "Mane", "Profesión": "Periodista",
+                               "Contacto de emergencia": "Alguien / 994768540",
+                               "Restricción alimentaria": "sin mariscos"},
          "current_job": {"role": {"name": "Analista"}, "area_id": 1,
                          "boss": {"rut": "22.222.222-2"}}},
         {"id": 468, "full_name": "Luis Soto", "email": "luis@azerta.cl",
-         "birthday": "1985-" + _f(200)[5:],
+         "birthday": "1985-" + _f(200)[5:], "rut": "22.222.222-2",
+         "custom_attributes": {"Apodo": "Lucho"},
          "current_job": {"role": {"name": "Disenador"}, "area_id": 2}},
     ],
 }
@@ -160,8 +164,8 @@ class ChatViewTests(TestCase):
         """El caso que fallaba: una vacacion en curso que empezo antes de hoy."""
         cuerpo = self._preguntar("quien esta de vacaciones hoy")
         nombres = [i["nombre"] for i in cuerpo["items"]]
-        self.assertIn("Ana Rojas", nombres)     # 24-ago -> 4-sep, en curso
-        self.assertIn("Luis Soto", nombres)     # dia administrativo de hoy
+        self.assertIn('Ana "Mane" Rojas', nombres)     # 24-ago -> 4-sep, en curso
+        self.assertIn('Luis "Lucho" Soto', nombres)     # dia administrativo de hoy
         self.assertEqual(len(cuerpo["items"]), 2)  # la de diciembre queda fuera
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
@@ -183,7 +187,7 @@ class ChatViewTests(TestCase):
     def test_subtipo_administrativo(self, mocked):
         cuerpo = self._preguntar("dias administrativos hoy")
         self.assertEqual(len(cuerpo["items"]), 1)
-        self.assertEqual(cuerpo["items"][0]["nombre"], "Luis Soto")
+        self.assertEqual(cuerpo["items"][0]["nombre"], 'Luis "Lucho" Soto')
         self.assertTrue(cuerpo["items"][0]["media_jornada"])
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
@@ -248,7 +252,7 @@ class PersonaTests(TestCase):
             content_type="application/json",
         ).json()
         self.assertEqual(cuerpo["meta"]["intencion"], "persona")
-        self.assertIn("Ana Rojas", cuerpo["answer"])
+        self.assertIn("Ana", cuerpo["answer"])
         self.assertNotIn("Luis Soto", cuerpo["answer"])  # no lista a los demas
         self.assertEqual(len(cuerpo["items"]), 1)
 
@@ -259,7 +263,7 @@ class PersonaTests(TestCase):
             content_type="application/json",
         ).json()
         self.assertIn("no registra ausencias", cuerpo["answer"])
-        self.assertIn("Ana Rojas", cuerpo["answer"])
+        self.assertIn("Ana", cuerpo["answer"])
 
 
 @SIN_DOCUMENTOS
@@ -415,7 +419,7 @@ class AsistenteTests(TestCase):
         self.assertNotIn("Ana Rojas", enviado)
         self.assertIn("Persona 1", enviado)
         # pero el usuario ve el nombre real
-        self.assertIn("Ana Rojas", cuerpo["answer"])
+        self.assertIn("Ana", cuerpo["answer"])
 
     @override_settings(ASISTENTE_PROVEEDOR="openai", OPENAI_API_KEY="sk-prueba")
     @patch("chat.buk.requests.get", side_effect=fake_get)
@@ -600,7 +604,7 @@ class GeminiTests(TestCase):
             _respuesta_gemini(texto="Persona 1 esta de vacaciones."),
         ]
         cuerpo = self._preguntar("hazme un resumen de la carga del equipo")
-        self.assertIn("Ana Rojas", cuerpo["answer"])
+        self.assertIn("Ana", cuerpo["answer"])
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     @patch("chat.asistente._cliente_gemini")
@@ -837,7 +841,7 @@ class CombinacionTests(TestCase):
         cuerpo = self._preguntar("compara cuánta gente estuvo fuera este mes")
         enviado = str(generar.call_args.kwargs["contents"])
         self.assertNotIn("Ana Rojas", enviado)
-        self.assertIn("Ana Rojas", cuerpo["answer"])
+        self.assertIn("Ana", cuerpo["answer"])
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     @patch("chat.asistente._cliente_gemini")
@@ -991,7 +995,8 @@ class ReevaluarTests(TestCase):
     def setUp(self):
         cache.clear()
 
-    def test_cierra_las_consultas_que_los_documentos_ya_responden(self):
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_cierra_las_consultas_que_los_documentos_ya_responden(self, mocked):
         from io import StringIO
         from django.core.management import call_command
         from chat.models import ConsultaNoResuelta, registrar
@@ -1090,7 +1095,7 @@ class CumpleanosTests(TestCase):
         self.assertEqual(cuerpo["meta"]["intencion"], "cumpleanos")
         self.assertTrue(cuerpo["meta"].get("proximos"))
         self.assertIn("Nadie cumple años hoy", cuerpo["answer"])
-        self.assertIn("Ana Rojas", cuerpo["answer"])   # cumple en 3 días
+        self.assertIn("Ana", cuerpo["answer"])   # cumple en 3 días
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     def test_cuenta_los_dias_desde_hoy_y_no_desde_el_rango(self, mocked):
@@ -1175,3 +1180,107 @@ class GrupoDesconocidoTests(TestCase):
     def test_un_area_real_si_se_responde(self, mocked):
         cuerpo = self._preguntar("¿quién está trabajando hoy en el área de prensa?")
         self.assertEqual(cuerpo["meta"]["intencion"], "trabajando")
+
+
+class ApodoTests(TestCase):
+    """El apodo sale de BUK; el resto de custom_attributes no debe salir."""
+
+    def setUp(self):
+        cache.clear()
+
+    def test_formato_primer_nombre_apodo_resto(self):
+        self.assertEqual(
+            buk.nombre_con_apodo("María José Peña Gutiérrez", "Mane"),
+            'María "Mane" José Peña Gutiérrez')
+
+    def test_no_repite_el_apodo_si_ya_esta_en_el_nombre(self):
+        self.assertEqual(buk.nombre_con_apodo("Felipe Edwards Marin", "Felipe"),
+                         "Felipe Edwards Marin")
+        self.assertEqual(buk.nombre_con_apodo("Juan Andres Abarca Castro", "Juan Andrés"),
+                         "Juan Andres Abarca Castro")
+
+    def test_varios_apodos_en_un_campo(self):
+        self.assertEqual(buk.apodos_de("Jose, JM"), ["Jose", "JM"])
+        self.assertEqual(buk.apodos_de("Ali o Alice"), ["Ali", "Alice"])
+        self.assertEqual(buk.apodos_de(""), [])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_no_filtra_el_resto_de_custom_attributes(self, mocked):
+        personas, _ = buk.directorio()
+        crudo = json.dumps(list(personas.values()), ensure_ascii=False)
+        for reservado in ("emergencia", "994768540", "alimentaria", "Profesión"):
+            self.assertNotIn(reservado, crudo)
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_se_puede_preguntar_por_el_apodo(self, mocked):
+        from chat import personas as mod
+        directorio, _ = buk.directorio()
+        ids, _ = mod.buscar("¿está la Mane hoy?", directorio)
+        self.assertEqual(len(ids), 1)
+        self.assertEqual(directorio[next(iter(ids))]["nombre"], "Ana Rojas")
+
+
+class CuentasTests(TestCase):
+    """La asignación por cuenta vive en la planilla; BUK la tiene vacía."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _planilla(self, filas):
+        import openpyxl
+        carpeta = tempfile.mkdtemp()
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Detalle Cuenta-Persona"
+        ws.append(["Detalle Unipersonal"]); ws.append([]); 
+        ws.append(["Cuenta / Cliente", "Persona", "Hrs. X Semana", "Rut", "Apodo"])
+        for f in filas:
+            ws.append(f)
+        wb.save(Path(carpeta) / "cuentas.xlsx")
+        return carpeta
+
+    def test_lee_la_planilla_y_agrupa_por_cuenta(self):
+        from chat import cuentas
+        carpeta = self._planilla([
+            ["CENCOSUD", "Rojas Ana", None, "11.111.111-1", "Ana"],
+            ["CENCOSUD", "Soto Luis", None, "22.222.222-2", "Lucho"],
+            ["BHP", "Rojas Ana", None, "11.111.111-1", "Ana"],
+        ])
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            self.assertEqual(cuentas.nombres(), ["BHP", "CENCOSUD"])
+            self.assertEqual(len(cuentas.buscar("vacaciones en cencosud")["ruts"]), 2)
+            self.assertIsNone(cuentas.buscar("vacaciones en santander"))
+
+    def test_prefiere_la_coincidencia_mas_larga(self):
+        from chat import cuentas
+        carpeta = self._planilla([
+            ["AFP", "Rojas Ana", None, "11.111.111-1", None],
+            ["AFP Capital", "Soto Luis", None, "22.222.222-2", None],
+        ])
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            self.assertEqual(cuentas.buscar("gente de afp capital")["nombre"], "AFP Capital")
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_el_rut_no_queda_en_el_directorio(self, mocked):
+        carpeta = self._planilla([["CENCOSUD", "Rojas Ana", None, "11.111.111-1", "Ana"]])
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            personas, _ = buk.directorio()
+        crudo = json.dumps(list(personas.values()), ensure_ascii=False)
+        self.assertNotIn("_rut", crudo)
+        self.assertNotIn("11.111.111-1", crudo)
+        self.assertNotIn("111111111", crudo)
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_un_apodo_repetido_pregunta_cual(self, mocked):
+        """Hay dos "Javi" en la nómina real: elegir una al azar sería peor."""
+        from chat import buk as mod
+        directorio, _ = mod.directorio()
+        for persona in directorio.values():
+            persona["apodo"] = "Javi"
+            persona["nombre_completo"] = mod.nombre_con_apodo(persona["nombre"], "Javi")
+        with patch("chat.buk.directorio", return_value=(directorio, 0)):
+            cuerpo = self.client.post(
+                "/api/chat/", data=json.dumps({"message": "¿está la Javi hoy?"}),
+                content_type="application/json").json()
+        self.assertEqual(cuerpo["meta"]["intencion"], "persona_ambigua")
+        self.assertIn("¿Por cuál preguntas?", cuerpo["answer"])
