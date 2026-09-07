@@ -7,8 +7,8 @@ const csrftoken = document.querySelector("[name=csrfmiddlewaretoken]").value;
 const mascota = document.querySelector("#mascota");
 const palabra = document.querySelector("#mascota .palabra");
 
-/* La mascota es la palabra "azerta". Al empezar la conversación se va a la
-   izquierda y se queda solo en la "a". Es decorativa: si no está, nada falla. */
+/* La mascota es la palabra "Azerta". Al empezar la conversación se va a la
+   izquierda y se queda solo en la "A". Es decorativa: si no está, nada falla. */
 let animando = null;
 
 if (palabra) {

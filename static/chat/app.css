@@ -20,7 +20,11 @@ body {
   margin: 0;
   color: var(--claro);
   background: var(--noche);
-  font-family: Lato, "Helvetica Neue", sans-serif;
+  /* Lato, la tipografia de azerta.cl. Solo existe en 100/300/400/700/900: el
+     sitio declara 500 y 800, que Google no entrega y el navegador falsifica
+     estirando otro peso. Aca se usan los reales: 400 texto, 700 titulos,
+     900 display. */
+  font-family: Lato, "Helvetica Neue", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -70,9 +74,9 @@ body::after {
 .brand {
   position: relative;
   color: var(--humo);
-  font-family: Lato, sans-serif;
+  font-family: inherit;
   font-size: clamp(25px, 4vw, 32px);
-  font-weight: 700;
+  font-weight: 900;
   letter-spacing: -.045em;
   text-decoration: none;
 }
@@ -250,6 +254,7 @@ body::after {
 
 .people .top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .people strong { font-size: 13.5px; color: var(--humo); font-weight: 700; }
+.signal, .composer input { font-weight: 400; }
 
 .people .kind {
   flex: none;
@@ -390,8 +395,8 @@ body::after {
   display: flex;
   align-items: baseline;
   color: var(--humo);
-  font-family: Lato, sans-serif;
-  font-weight: 700;
+  font-family: inherit;
+  font-weight: 900;
   font-size: clamp(52px, 9vw, 92px);
   letter-spacing: -.05em;
   line-height: 1;

@@ -480,13 +480,23 @@ la consulta pero no quién es quién.
 viaja igual dentro del mensaje. Si alguien pregunta "¿está Claudio de
 vacaciones?", ese nombre llega al proveedor.
 
+## Tipografía
+
+**Lato**, la misma de azerta.cl.
+
+Un detalle que conviene saber: Lato solo existe en **100, 300, 400, 700 y 900**.
+azerta.cl declara pesos 500 y 800 que Google Fonts no entrega — el navegador los
+falsifica estirando el 400 y el 700, y por eso el texto del sitio se ve algo
+distinto según el navegador. Aquí se usan los reales: 400 para texto, 700 para
+títulos y controles, 900 para el display de la mascota.
+
 ## Mascota
 
-Es tipográfica, no una imagen: la palabra **azerta⁷** centrada mientras el chat
+Es tipográfica, no una imagen: la palabra **Azerta⁷** centrada mientras el chat
 está vacío. Al enviar el primer mensaje se va a la izquierda y las letras
 `zerta` colapsan **en ancho**, no solo en opacidad, para que la `a` quede en su
 lugar en vez de dejar un hueco. El resultado es que la palabra se convierte en
-la A de Azerta.
+la **A** de Azerta.
 
 Reacciona a la conversación con `data-estado`:
 
