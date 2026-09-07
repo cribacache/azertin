@@ -308,7 +308,29 @@ no disparen una búsqueda de persona en cualquier frase.
 
 Si alguien no tiene apodo (15 de 98), se muestra el nombre completo sin más.
 
-### Cuando el apodo se repite
+### El nombre manda sobre el verbo
+
+`felipe toro está disponible?` pregunta por Felipe, no por la nómina entera. Si
+la pregunta nombra a alguien, esa persona se resuelve **antes** que la vista de
+grupo: antes la palabra "disponible" se llevaba la pregunta y contestaba
+"88 de 98 personas...", ignorando el nombre.
+
+La cortesía va todavía antes: un "hola" no tiene por qué gastar una consulta al
+directorio buscando a alguien que no se nombró.
+
+### Nombres mal escritos
+
+`felipe garrid` → *¿Querrás decir Felipe Josué Andrés Garrido Corvalan?* Se
+responde `sí` y contesta la pregunta original.
+
+La sugerencia **refina** lo ya encontrado en vez de reemplazarlo: `felipe
+garrid` se queda con el Felipe apellidado Garrido, no con la otra persona de ese
+apellido.
+
+Solo se consideran palabras que se parecen mucho a un nombre real (`PARECIDO`,
+0.78) y que no son vocabulario de pregunta. Eso último importa: **"años" se
+parece a "Llanos"**, y sin la exclusión `¿quién cumple años este mes?` terminaba
+respondiendo por una persona.
 
 Hay cinco "Javi" en la nómina. El asistente las numera y espera la aclaración:
 

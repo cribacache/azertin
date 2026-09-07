@@ -25,6 +25,10 @@ LARGO_MINIMO = 3
 # Los apodos se indexan desde dos letras porque "JM" y "Jo" son apodos reales;
 # las palabras cortas del idioma quedan en RESERVADAS para que no interfieran.
 LARGO_MINIMO_APODO = 2
+# Cuanto se tiene que parecer una palabra a un nombre real para sugerirla.
+# Alto a proposito: "garrid" debe sugerir "Garrido", pero "pinilla" no tiene por
+# que sugerir "Padilla" solo porque comparten letras.
+PARECIDO = 0.78
 
 
 def _tokens(texto):
@@ -51,6 +55,54 @@ def indice(directorio):
                 if len(token) >= minimo and token not in RESERVADAS:
                     mapa.setdefault(token, set()).add(pid)
     return mapa
+
+
+def _vocabulario():
+    """Palabras que ya sabemos que son de la pregunta, no nombres mal escritos.
+
+    Sin esto "años" sugiere "Llanos" y "¿quien cumple años?" termina
+    respondiendo por una persona.
+    """
+    from . import intents
+
+    palabras = set()
+    fuentes = [intents.PALABRAS_AUSENCIA, intents.PALABRAS_CUMPLE,
+               intents.PALABRAS_TRABAJANDO, intents.PALABRAS_DOTACION,
+               intents.PALABRAS_PROCEDIMIENTO, intents.PALABRAS_COMPLEJAS,
+               intents.SALUDOS, intents.AGRADECIMIENTOS, intents.DESPEDIDAS,
+               intents.IDENTIDAD, intents.MESES]
+    for fuente in fuentes:
+        for frase in fuente:
+            palabras.update(_tokens(frase))
+    for _, sinonimos in intents.CATEGORIA_POR_PALABRA:
+        for frase in sinonimos:
+            palabras.update(_tokens(frase))
+    return palabras
+
+
+def sugerir(mensaje, directorio, limite=3):
+    """Nombres parecidos a una palabra del mensaje que no coincide con nadie.
+
+    Para los errores de tipeo: "felipe garrid" o "javiera morno". Solo se
+    consideran palabras que se parezcan mucho a un nombre real, asi que una
+    palabra cualquiera de la pregunta no dispara sugerencias.
+    """
+    import difflib
+
+    mapa = indice(directorio)
+    conocidos = list(mapa)
+    vocabulario = _vocabulario()
+    sugeridos = {}
+    for token in _tokens(mensaje):
+        if (len(token) < LARGO_MINIMO or token in mapa
+                or token in RESERVADAS or token in vocabulario):
+            continue
+        cercanos = difflib.get_close_matches(token, conocidos, n=2, cutoff=PARECIDO)
+        for cercano in cercanos:
+            for pid in mapa[cercano]:
+                sugeridos.setdefault(pid, token)
+
+    return list(sugeridos)[:limite]
 
 
 def buscar(mensaje, directorio):

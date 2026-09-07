@@ -194,6 +194,10 @@ def responder_cuenta_ambigua(opciones, mensaje):
     }
 
 
+AFIRMACIONES = ("si", "sip", "claro", "exacto", "correcto", "ese", "esa",
+                "dale", "obvio", "asi es", "el mismo", "la misma")
+
+
 def elegir_opcion(respuesta, opciones):
     """Indice elegido en una respuesta como "2", "la segunda" o "Moreno".
 
@@ -201,6 +205,12 @@ def elegir_opcion(respuesta, opciones):
     adivinar cual de cuatro personas queria.
     """
     texto = intents.normalizar(respuesta).strip()
+
+    # con una sola opcion, un "si" alcanza para confirmar
+    if len(opciones) == 1:
+        palabras = set(re.split(r"[^\w]+", texto))
+        if palabras & set(AFIRMACIONES):
+            return 0
 
     numero = re.search(r"\b(\d{1,2})\b", texto)
     if numero:
@@ -709,6 +719,73 @@ def chat_message(request):
     return JsonResponse(respuesta)
 
 
+def _responder_si_nombra_persona(plan, hoy):
+    """Respuesta sobre la persona nombrada, o None si no nombra a ninguna.
+
+    Va antes de las vistas de grupo. Un nombre es mucho mas especifico que el
+    verbo de la pregunta: quien escribe "felipe toro esta disponible?" quiere
+    saber de Felipe, no un resumen de la empresa.
+    """
+    mensaje = plan["mensaje"]
+    try:
+        personas_map, req_dir = buk.directorio()
+        ids, _ = personas.buscar(mensaje, personas_map)
+    except buk.BukError:
+        return None   # sin BUK todavia se puede responder desde documentos
+
+    if not ids:
+        # Nadie coincide, pero puede ser un nombre mal escrito. Se revisa aca y
+        # no solo al final: "rojs esta disponible?" se iria a la vista de grupo
+        # y contestaria por las 98 personas.
+        sugeridos = personas.sugerir(mensaje, personas_map)
+        if len(sugeridos) == 1:
+            return responder_quiso_decir(sugeridos[0], personas_map, mensaje, req_dir)
+        if sugeridos:
+            return responder_ambiguo(set(sugeridos), personas_map, mensaje, req_dir)
+        return None
+    if len(ids) > 1:
+        # Puede ser un apodo repetido (hay cinco "Javi") o un apellido mal
+        # escrito que dejo solo el nombre de pila coincidiendo. La sugerencia
+        # se cruza con lo ya encontrado en vez de reemplazarlo: "felipe garrid"
+        # tiene que quedarse con el Felipe apellidado Garrido, no con la otra
+        # persona de ese apellido.
+        sugeridos = set(personas.sugerir(mensaje, personas_map))
+        refinado = sugeridos & ids
+        if len(refinado) == 1:
+            return responder_quiso_decir(next(iter(refinado)), personas_map,
+                                         mensaje, req_dir)
+        if len(sugeridos) == 1:
+            return responder_quiso_decir(next(iter(sugeridos)), personas_map,
+                                         mensaje, req_dir)
+        return responder_ambiguo(ids, personas_map, mensaje, req_dir)
+
+    plan_persona = {
+        "desde": plan.get("desde") or hoy,
+        "hasta": plan.get("hasta") or plan.get("desde") or hoy,
+        "etiqueta": plan.get("etiqueta") or "hoy",
+        "categoria": plan.get("categoria"),
+        "subtipo": plan.get("subtipo"),
+        "mensaje": mensaje,
+    }
+    respuesta = responder_persona(plan_persona, ids, personas_map)
+    respuesta["meta"]["requests_buk"] += req_dir
+    return respuesta
+
+
+def responder_quiso_decir(pid, personas_map, mensaje, req):
+    """Sugiere el nombre parecido en vez de responder por quien no se pidio."""
+    persona = personas_map[pid]
+    nombre = persona.get("nombre_completo") or persona["nombre"]
+    registrar(mensaje, "persona_desconocida")
+    return {
+        "answer": f"No encontré ese nombre exacto. ¿Querrás decir {nombre}?",
+        "items": [],
+        "meta": {"intencion": "quiso_decir", "requests_buk": req},
+        "_pendiente": {"tipo": "persona", "ids": [pid], "opciones": [nombre],
+                       "pregunta": mensaje},
+    }
+
+
 def _resolver(mensaje, hoy):
     """Decide quien responde. El orden va de lo barato a lo caro."""
     # Modo "todo por el modelo": mejor criterio, mas costo por pregunta.
@@ -767,6 +844,19 @@ def _resolver(mensaje, hoy):
         if seccion:
             return responder_documento(seccion)
 
+    # La cortesia va primero: un "hola" no tiene por que gastar una consulta al
+    # directorio buscando a alguien que no se nombro.
+    if plan["intencion"] in CORTESIA:
+        return responder_cortesia(plan["intencion"], mensaje)
+
+    # Si la pregunta nombra a alguien, esa persona manda sobre la intencion de
+    # grupo: "felipe toro esta disponible?" pregunta por Felipe, no por la
+    # nomina entera. Antes el "disponible" se llevaba la pregunta y contestaba
+    # por las 98 personas, ignorando el nombre.
+    respuesta_persona = _responder_si_nombra_persona(plan, hoy)
+    if respuesta_persona is not None:
+        return respuesta_persona
+
     if plan["intencion"] == "ausencias":
         return responder_ausencias(plan)
     if plan["intencion"] == "dotacion":
@@ -775,27 +865,6 @@ def _resolver(mensaje, hoy):
         return responder_cumpleanos(plan)
     if plan["intencion"] == "trabajando":
         return responder_trabajando(plan)
-    if plan["intencion"] in CORTESIA:
-        return responder_cortesia(plan["intencion"], mensaje)
-
-    # No se reconocio la intencion, pero puede nombrar a alguien: "y Duk?",
-    # "cuando vuelve Javiera?". Se responde por esa persona, para hoy.
-    try:
-        personas_map, req_dir = buk.directorio()
-        ids, _ = personas.buscar(mensaje, personas_map)
-        if len(ids) == 1:
-            respuesta = responder_persona(
-                {"desde": hoy, "hasta": hoy, "etiqueta": "hoy", "mensaje": mensaje},
-                ids, personas_map,
-            )
-            respuesta["meta"]["requests_buk"] += req_dir
-            return respuesta
-        if len(ids) > 1:
-            # Un apodo puede repetirse: hay dos "Javi" en la nomina. Preguntar
-            # cual es mejor que elegir una al azar o rendirse.
-            return responder_ambiguo(ids, personas_map, mensaje, req_dir)
-    except buk.BukError:
-        pass  # sin BUK igual se puede responder desde los documentos
 
     seccion = documentos.responder(mensaje)
     if seccion:

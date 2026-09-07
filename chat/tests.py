@@ -1424,3 +1424,85 @@ class DisponiblesTests(TestCase):
         claves = [(i["id"], i["tipo"]) for i in cuerpo["items"]]
         self.assertEqual(len(claves), len(set(claves)))  # sin filas repetidas
         self.assertIn(str(len({i["id"] for i in cuerpo["items"]})), cuerpo["answer"])
+
+
+@SIN_DOCUMENTOS
+class NombrePrioritarioTests(TestCase):
+    """Un nombre es más específico que el verbo de la pregunta."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _preguntar(self, texto, cliente=None):
+        return (cliente or self.client).post(
+            "/api/chat/", data=json.dumps({"message": texto}),
+            content_type="application/json").json()
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_el_nombre_manda_sobre_la_intencion_de_grupo(self, mocked):
+        """"¿Ana está disponible?" pregunta por Ana, no por la nómina."""
+        cuerpo = self._preguntar("¿Ana Rojas está disponible?")
+        self.assertEqual(cuerpo["meta"]["intencion"], "persona")
+        self.assertIn("Ana", cuerpo["answer"])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_sin_nombre_sigue_respondiendo_por_el_grupo(self, mocked):
+        cuerpo = self._preguntar("¿quién está disponible hoy?")
+        self.assertEqual(cuerpo["meta"]["intencion"], "trabajando")
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_un_saludo_no_consulta_el_directorio(self, mocked):
+        """La cortesía va antes de buscar personas."""
+        cuerpo = self._preguntar("hola")
+        self.assertEqual(cuerpo["meta"]["intencion"], "cortesia")
+        mocked.assert_not_called()
+
+
+@SIN_DOCUMENTOS
+class QuisoDecirTests(TestCase):
+    """Apellido mal escrito: sugerir en vez de listar a todos los homónimos."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _preguntar(self, texto, cliente=None):
+        return (cliente or self.client).post(
+            "/api/chat/", data=json.dumps({"message": texto}),
+            content_type="application/json").json()
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_sugiere_el_nombre_parecido(self, mocked):
+        # "Rojs" sola no coincide con nadie, pero se parece a "Rojas"
+        cuerpo = self._preguntar("¿Rojs está disponible?")
+        self.assertEqual(cuerpo["meta"]["intencion"], "quiso_decir")
+        self.assertIn("¿Querrás decir", cuerpo["answer"])
+        self.assertIn("Ana", cuerpo["answer"])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_confirmar_con_si_responde_la_pregunta_original(self, mocked):
+        cliente = self.client
+        self._preguntar("¿Rojs está disponible?", cliente)
+        segunda = self._preguntar("sí", cliente)
+        self.assertEqual(segunda["meta"]["intencion"], "persona")
+        self.assertTrue(segunda["meta"]["desambiguado"])
+
+    def test_no_sugiere_por_cualquier_palabra(self):
+        """"pinilla" no debe sugerir "Padilla" solo porque comparten letras."""
+        from chat import personas as mod
+        directorio = {1: {"id": 1, "nombre": "Reimar Padilla Castellano", "apodo": ""}}
+        self.assertEqual(mod.sugerir("felipe pinilla esta disponible", directorio), [])
+        self.assertEqual(mod.sugerir("reimar padila esta disponible", directorio), [1])
+
+    def test_si_confirma_solo_cuando_hay_una_opcion(self):
+        from chat.views import elegir_opcion
+        self.assertEqual(elegir_opcion("sí", ["Ana Rojas"]), 0)
+        self.assertIsNone(elegir_opcion("sí", ["Ana Rojas", "Ana Soto"]))
+
+    def test_el_vocabulario_de_preguntas_no_sugiere_nombres(self):
+        """"años" se parece a "Llanos": sin esto, "¿quién cumple años?"
+        terminaba respondiendo por una persona."""
+        from chat import personas as mod
+        directorio = {1: {"id": 1, "nombre": "Bastian Nicolas Llanos Guijuelos",
+                          "apodo": "Bastián"}}
+        self.assertEqual(mod.sugerir("quien cumple anos este mes", directorio), [])
+        self.assertEqual(mod.sugerir("bastian llanoz esta hoy", directorio), [1])
