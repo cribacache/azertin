@@ -1872,3 +1872,116 @@ class FeedbackTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(respuesta.status_code, 400)
+
+
+class IdentidadYCumplePersonaTests(TestCase):
+    """Nombrar a alguien no siempre pregunta por su disponibilidad: "quien es
+    X", "que cargo tiene X" y "cuando cumple anos X" son otras tres preguntas,
+    y tienen que responderse aunque el modelo no este disponible (esto corre
+    con las reglas, sin mockear Gemini)."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _planilla_con_cuenta(self):
+        import openpyxl
+        carpeta = tempfile.mkdtemp()
+        libro = openpyxl.Workbook()
+        hoja = libro.active
+        hoja.title = "Detalle Cuenta-Persona"
+        for _ in range(3):
+            hoja.append([])
+        hoja.append(["BANCO SANTANDER", "Ana Rojas", None, "11.111.111-1"])
+        libro.save(Path(carpeta) / "cuentas.xlsx")
+        return carpeta
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_quien_es_da_identidad_no_ausencias(self, mocked):
+        cuerpo = self.client.post(
+            "/api/chat/", data='{"message":"quien es Ana Rojas?"}',
+            content_type="application/json",
+        ).json()
+        self.assertEqual(cuerpo["meta"]["intencion"], "identidad_persona")
+        self.assertIn("Analista", cuerpo["answer"])
+        self.assertNotIn("licencia", cuerpo["answer"].lower())
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_que_cargo_tiene_tambien_es_identidad(self, mocked):
+        cuerpo = self.client.post(
+            "/api/chat/", data='{"message":"que cargo tiene Ana Rojas?"}',
+            content_type="application/json",
+        ).json()
+        self.assertEqual(cuerpo["meta"]["intencion"], "identidad_persona")
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_que_cuentas_maneja_lista_las_cuentas(self, mocked):
+        with override_settings(DOCUMENTOS_DIR=self._planilla_con_cuenta()):
+            cuerpo = self.client.post(
+                "/api/chat/", data='{"message":"que cuentas maneja Ana Rojas?"}',
+                content_type="application/json",
+            ).json()
+        self.assertEqual(cuerpo["meta"]["intencion"], "identidad_persona")
+        self.assertIn("BANCO SANTANDER", cuerpo["answer"])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_sin_cuentas_asignadas_lo_dice(self, mocked):
+        cuerpo = self.client.post(
+            "/api/chat/", data='{"message":"que clientes atiende Ana Rojas?"}',
+            content_type="application/json",
+        ).json()
+        self.assertIn("No tiene cuentas", cuerpo["answer"])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_cuando_cumple_anos_no_es_ausencias(self, mocked):
+        cuerpo = self.client.post(
+            "/api/chat/", data='{"message":"cuando cumple años Ana Rojas?"}',
+            content_type="application/json",
+        ).json()
+        self.assertEqual(cuerpo["meta"]["intencion"], "cumpleanos_persona")
+        self.assertNotIn("licencia", cuerpo["answer"].lower())
+        self.assertNotIn("jornada", cuerpo["answer"].lower())
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_sin_ese_dato_no_ausencias(self, mocked):
+        """Luis Soto no tiene apodo raro, pero el cumpleanos si esta seteado;
+        si faltara, avisa en vez de caer a ausencias."""
+        from unittest.mock import patch as p
+        with p("chat.buk._cumple", return_value=""):
+            cuerpo = self.client.post(
+                "/api/chat/", data='{"message":"cuando cumple años Ana Rojas?"}',
+                content_type="application/json",
+            ).json()
+        self.assertIn("No tengo registrada", cuerpo["answer"])
+
+
+class PersonaPorCargoTests(TestCase):
+    """"Quien es el gerente de X" no nombra a nadie: hay que buscar por el
+    texto del cargo."""
+
+    def setUp(self):
+        cache.clear()
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_encuentra_por_cargo_exacto(self, mocked):
+        cuerpo = self.client.post(
+            "/api/chat/", data='{"message":"quien es la analista?"}',
+            content_type="application/json",
+        ).json()
+        self.assertEqual(cuerpo["meta"]["intencion"], "identidad_persona")
+        self.assertIn("Ana", cuerpo["answer"])
+        self.assertIn("Analista", cuerpo["answer"])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_cargo_inexistente_no_inventa(self, mocked):
+        cuerpo = self.client.post(
+            "/api/chat/", data='{"message":"quien es el gerente de finanzas?"}',
+            content_type="application/json",
+        ).json()
+        self.assertNotEqual(cuerpo["meta"]["intencion"], "identidad_persona")
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_herramienta_persona_por_cargo(self, mocked):
+        from chat import herramientas
+        resultado = herramientas.persona_por_cargo("analista")
+        self.assertTrue(resultado["encontrada"])
+        self.assertEqual(resultado["nombre"], "Ana Rojas")

@@ -70,7 +70,7 @@ def _vocabulario():
                intents.PALABRAS_TRABAJANDO, intents.PALABRAS_DOTACION,
                intents.PALABRAS_PROCEDIMIENTO, intents.PALABRAS_COMPLEJAS,
                intents.SALUDOS, intents.AGRADECIMIENTOS, intents.DESPEDIDAS,
-               intents.IDENTIDAD, intents.MESES]
+               intents.IDENTIDAD, intents.PALABRAS_IDENTIDAD_PERSONA, intents.MESES]
     for fuente in fuentes:
         for frase in fuente:
             palabras.update(_tokens(frase))
@@ -131,3 +131,38 @@ def buscar(mensaje, directorio):
     for token in tokens:
         union |= mapa[token]
     return union, tokens
+
+
+# Palabras despues de las cuales suele venir un cargo, no un nombre: "quien es
+# el gerente de personas" no nombra a nadie, pregunta quien ocupa ese cargo.
+_INTRO_CARGO = ("quien es", "quien era", "quien fue", "sabes quien es")
+
+
+def buscar_por_cargo(mensaje, directorio):
+    """Ids de quienes tienen el cargo que se pregunta, o set() si no aplica.
+
+    Solo se activa con la forma "quien es el/la <cargo>": buscar por cargo en
+    cualquier otro tipo de pregunta daria falsos positivos (una palabra
+    cualquiera de la pregunta podria coincidir con un cargo real).
+    """
+    texto = normalizar(mensaje).strip(" ?¿.,")
+    intro = next((i for i in _INTRO_CARGO if texto.startswith(i)), None)
+    if intro is None:
+        return set()
+
+    resto = texto[len(intro):].strip()
+    for articulo in ("el ", "la ", "los ", "las "):
+        if resto.startswith(articulo):
+            resto = resto[len(articulo):]
+            break
+
+    palabras = {p for p in resto.split() if len(p) >= 3}
+    if not palabras:
+        return set()
+
+    coincidencias = set()
+    for pid, persona in directorio.items():
+        cargo = set(normalizar(persona.get("cargo") or "").split())
+        if palabras <= cargo:
+            coincidencias.add(pid)
+    return coincidencias

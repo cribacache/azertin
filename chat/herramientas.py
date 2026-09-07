@@ -152,6 +152,42 @@ def equipo_de(grupo):
     }
 
 
+def persona_por_cargo(cargo):
+    """Quien ocupa un cargo, cuando la pregunta no nombra a nadie.
+
+    Cubre "quien es el gerente de personas": no hay un nombre que resolver,
+    hay que buscar por el texto del cargo en el directorio.
+    """
+    from .intents import normalizar
+
+    directorio, _ = buk.directorio()
+    palabras = {p for p in normalizar(cargo or "").split() if len(p) >= 3}
+    if not palabras:
+        return {"encontrada": False, "motivo": "No especificaste un cargo."}
+
+    coincidencias = [
+        p for p in directorio.values()
+        if palabras <= set(normalizar(p.get("cargo") or "").split())
+    ]
+    if not coincidencias:
+        return {"encontrada": False, "motivo": "Nadie tiene registrado ese cargo en BUK."}
+    if len(coincidencias) > 1:
+        return {
+            "encontrada": False,
+            "motivo": "Varias personas tienen un cargo parecido.",
+            "candidatos": sorted(p["nombre"] for p in coincidencias)[:8],
+        }
+
+    persona = coincidencias[0]
+    return {
+        "encontrada": True,
+        "nombre": persona["nombre"],
+        "cargo": persona.get("cargo") or "",
+        "area": persona.get("area") or "",
+        "cuentas": persona.get("cuentas") or [],
+    }
+
+
 def cumpleanos(desde=None, dias=0):
     """Quien cumple anos en un rango. Solo dia y mes: el anio no se expone."""
     d = _fecha(desde)
@@ -190,6 +226,7 @@ FUNCIONES = {
     "ausencias_de_persona": ausencias_de_persona,
     "info_persona": info_persona,
     "equipo_de": equipo_de,
+    "persona_por_cargo": persona_por_cargo,
     "cumpleanos": cumpleanos,
     "dotacion": dotacion,
     "buscar_politica": buscar_politica,
@@ -272,6 +309,23 @@ ESQUEMAS = [
                 "type": "object",
                 "properties": {"grupo": {"type": "string"}},
                 "required": ["grupo"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "persona_por_cargo",
+            "description": (
+                "Quien ocupa un cargo, cuando la pregunta NO nombra a nadie: "
+                "'quien es el gerente de personas', 'quien es la directora de "
+                "Cencosud'. Si la pregunta ya nombra a alguien, usa "
+                "info_persona en vez de esta."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"cargo": {"type": "string"}},
+                "required": ["cargo"],
             },
         },
     },

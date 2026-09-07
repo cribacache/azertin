@@ -69,6 +69,28 @@ def es_compleja(mensaje):
     return any(p in texto for p in PALABRAS_COMPLEJAS + PALABRAS_AREA)
 
 
+# "Quien es X", "que cargo tiene X", "que cuentas/clientes maneja X": se
+# pregunta por la identidad o la cartera de una persona, no por si esta
+# ausente hoy. Sin esto, nombrar a alguien siempre contestaba su
+# disponibilidad sin importar que se le haya preguntado de verdad, y sin
+# modelo disponible (cuota agotada, por ejemplo) esas preguntas quedaban sin
+# poder responderse.
+PALABRAS_IDENTIDAD_PERSONA = (
+    "quien es", "quienes son", "que cargo", "cual es el cargo", "que puesto",
+    "que rol tiene", "a que se dedica", "que cuentas", "que cliente",
+    "que clientes", "cuentas maneja", "cuentas tiene", "cuentas atiende",
+    "clientes maneja", "clientes tiene", "clientes atiende", "que maneja",
+    "que atiende", "a cargo de que", "a que cuenta pertenece",
+    "en que cuenta esta", "en que equipo esta", "de que equipo es",
+    "en que area esta", "de que area es",
+)
+
+
+def es_identidad_persona(texto):
+    """True si se pregunta por quien es alguien, no por su disponibilidad."""
+    return any(p in texto for p in PALABRAS_IDENTIDAD_PERSONA)
+
+
 def es_procedimiento(mensaje):
     """True si la pregunta es sobre una regla y no sobre quien esta ausente.
 

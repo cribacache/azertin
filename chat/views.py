@@ -91,6 +91,75 @@ def responder_persona(plan, ids, personas_map):
     }
 
 
+def responder_identidad(pid, personas_map):
+    """Quien es una persona: cargo, area y las cuentas que atiende.
+
+    Version en reglas de lo mismo que hace `herramientas.info_persona`, para
+    que "quien es X" y "que cuentas maneja X" funcionen aunque el modelo no
+    este disponible (cuota agotada, por ejemplo).
+    """
+    persona = personas_map[pid]
+    nombre = persona.get("nombre_completo") or persona["nombre"]
+    cargo, area = persona.get("cargo") or "", persona.get("area") or ""
+    cuentas_asignadas = persona.get("cuentas") or []
+
+    if cargo and area:
+        texto = f"{nombre} es {cargo} del área de {area}."
+    elif cargo:
+        texto = f"{nombre} es {cargo}."
+    else:
+        texto = f"{nombre} no tiene cargo registrado en BUK."
+
+    if cuentas_asignadas:
+        plural = "cuenta" if len(cuentas_asignadas) == 1 else "cuentas"
+        texto += f" Atiende {len(cuentas_asignadas)} {plural}: {', '.join(cuentas_asignadas)}."
+    else:
+        texto += " No tiene cuentas ni clientes asignados en la planilla."
+
+    return {
+        "answer": texto,
+        "items": [],
+        "meta": {"intencion": "identidad_persona", "persona": nombre, "requests_buk": 0},
+    }
+
+
+def responder_cumple_persona(pid, personas_map, hoy):
+    """Cuando cumple anos una persona en concreto, en vez de todo el grupo."""
+    persona = personas_map[pid]
+    nombre = persona.get("nombre_completo") or persona["nombre"]
+
+    if not persona.get("cumple"):
+        return {
+            "answer": f"No tengo registrada la fecha de cumpleaños de {nombre}.",
+            "items": [],
+            "meta": {"intencion": "cumpleanos_persona", "requests_buk": 0},
+        }
+
+    # Ventana de 366 dias: siempre cae dentro, sea cual sea el mes.
+    gente, req = buk.cumpleanos(hoy, 366, hoy=hoy)
+    suyo = next((p for p in gente if p["id"] == pid), None)
+    if not suyo:
+        return {
+            "answer": f"No tengo registrada la fecha de cumpleaños de {nombre}.",
+            "items": [], "meta": {"intencion": "cumpleanos_persona", "requests_buk": req},
+        }
+
+    fecha_larga = _fecha_larga(suyo["fecha"])
+    faltan = suyo["faltan"]
+    if faltan == 0:
+        texto = f"Hoy es el cumpleaños de {nombre}, {fecha_larga}."
+    elif faltan == 1:
+        texto = f"{nombre} cumple años mañana, {fecha_larga}."
+    else:
+        texto = f"{nombre} cumple años el {fecha_larga}, en {faltan} días."
+
+    return {
+        "answer": texto,
+        "items": [_item_cumple(suyo)],
+        "meta": {"intencion": "cumpleanos_persona", "requests_buk": req},
+    }
+
+
 def _familias(personas_map):
     return {p["familia"] for p in personas_map.values() if p.get("familia")}
 
@@ -957,6 +1026,17 @@ def _responder_si_nombra_persona(plan, hoy):
         return None   # sin BUK todavia se puede responder desde documentos
 
     if not ids:
+        # "quien es el gerente de personas" no nombra a nadie: pregunta quien
+        # ocupa un cargo. Se revisa antes de la sugerencia por nombre porque
+        # "gerente" o "personas" no tienen por que parecerse a un apellido.
+        por_cargo = personas.buscar_por_cargo(mensaje, personas_map)
+        if len(por_cargo) == 1:
+            respuesta = responder_identidad(next(iter(por_cargo)), personas_map)
+            respuesta["meta"]["requests_buk"] += req_dir
+            return respuesta
+        if por_cargo:
+            return responder_ambiguo(por_cargo, personas_map, mensaje, req_dir)
+
         # Nadie coincide, pero puede ser un nombre mal escrito. Se revisa aca y
         # no solo al final: "rojs esta disponible?" se iria a la vista de grupo
         # y contestaria por las 98 personas.
@@ -981,6 +1061,22 @@ def _responder_si_nombra_persona(plan, hoy):
             return responder_quiso_decir(next(iter(sugeridos)), personas_map,
                                          mensaje, req_dir)
         return responder_ambiguo(ids, personas_map, mensaje, req_dir)
+
+    pid = next(iter(ids))
+    texto_normalizado = intents.normalizar(mensaje)
+
+    # Un nombre no siempre pregunta por disponibilidad: "quien es X", "que
+    # cargo tiene X" y "cuando cumple anos X" son otras tres preguntas
+    # distintas sobre la misma persona, y cada una necesita su propia
+    # respuesta en vez de la ausencia de siempre.
+    if any(p in texto_normalizado for p in intents.PALABRAS_CUMPLE):
+        respuesta = responder_cumple_persona(pid, personas_map, hoy)
+        respuesta["meta"]["requests_buk"] += req_dir
+        return respuesta
+    if intents.es_identidad_persona(texto_normalizado):
+        respuesta = responder_identidad(pid, personas_map)
+        respuesta["meta"]["requests_buk"] += req_dir
+        return respuesta
 
     plan_persona = {
         "desde": plan.get("desde") or hoy,
