@@ -112,15 +112,38 @@ class SinConfigurar(Exception):
 
 CLAVE_FALLAS = "asistente:fallas"
 CLAVE_PAUSA = "asistente:pausa"
+CLAVE_MOTIVO = "asistente:motivo"
+
+# Por que dejo de responder, clasificado desde el mensaje de error del
+# proveedor. Sirve para mostrarlo en la interfaz en vez de un generico "no
+# disponible": no es lo mismo quedarse sin cuota gratis que tener la clave mal.
+MOTIVOS_LEGIBLES = {
+    "cuota_agotada": "se agotó la cuota gratuita por hoy",
+    "clave_invalida": "la clave de API no es válida",
+    "error_proveedor": "el proveedor no está respondiendo",
+}
+
+
+def _clasificar_error(error):
+    texto = str(error or "")
+    if "RESOURCE_EXHAUSTED" in texto or "429" in texto:
+        return "cuota_agotada"
+    if any(p in texto for p in ("PERMISSION_DENIED", "API_KEY_INVALID", "401", "403")):
+        return "clave_invalida"
+    return "error_proveedor"
 
 
 def en_pausa():
     return bool(cache.get(CLAVE_PAUSA))
 
 
-def registrar_falla():
+def registrar_falla(error=None):
     fallas = (cache.get(CLAVE_FALLAS) or 0) + 1
     cache.set(CLAVE_FALLAS, fallas, settings.ASISTENTE_PAUSA_SEGUNDOS)
+    # Se guarda desde la primera falla, no solo cuando se activa la pausa: si
+    # la interfaz consulta el estado a mitad de una racha de fallas, ya hay un
+    # motivo que mostrar en vez de nada.
+    cache.set(CLAVE_MOTIVO, _clasificar_error(error), settings.ASISTENTE_PAUSA_SEGUNDOS)
     if fallas >= settings.ASISTENTE_FALLAS_MAX:
         cache.set(CLAVE_PAUSA, True, settings.ASISTENTE_PAUSA_SEGUNDOS)
         cache.delete(CLAVE_FALLAS)
@@ -133,6 +156,7 @@ def registrar_falla():
 def registrar_exito():
     cache.delete(CLAVE_FALLAS)
     cache.delete(CLAVE_PAUSA)
+    cache.delete(CLAVE_MOTIVO)
 
 
 def proveedor():
@@ -150,6 +174,31 @@ def modelo():
 def disponible():
     """Hay clave y el proveedor no esta en pausa por fallas recientes."""
     return bool(clave()) and not en_pausa()
+
+
+def estado():
+    """Para la interfaz: que modelo esta activo y, si no lo esta, por que.
+
+    No expone nada nuevo que la interfaz no supiera ya (el nombre del modelo
+    y el proveedor ya se mandan en cada respuesta): solo lo junta en un solo
+    lugar para pintarlo apenas se carga la pagina, sin esperar una pregunta.
+    """
+    if not clave():
+        return {
+            "disponible": False, "proveedor": proveedor(), "modelo": modelo(),
+            "motivo": "sin_clave",
+            "motivo_legible": f"no hay clave de API configurada para {proveedor()}",
+        }
+    if en_pausa():
+        motivo = cache.get(CLAVE_MOTIVO) or "error_proveedor"
+        return {
+            "disponible": False, "proveedor": proveedor(), "modelo": modelo(),
+            "motivo": motivo, "motivo_legible": MOTIVOS_LEGIBLES[motivo],
+        }
+    return {
+        "disponible": True, "proveedor": proveedor(), "modelo": modelo(),
+        "motivo": None, "motivo_legible": None,
+    }
 
 
 # --------------------------------------------------------------------------
@@ -380,8 +429,8 @@ def responder(mensaje, hoy, contexto=None, historial=None, alias=None):
             resultado = _responder_gemini(mensaje, hoy, contexto, historial, alias)
         else:
             resultado = _responder_openai(mensaje, hoy, contexto)
-    except Exception:
-        registrar_falla()
+    except Exception as error:
+        registrar_falla(error)
         raise
     registrar_exito()
     return resultado

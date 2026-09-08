@@ -1985,3 +1985,57 @@ class PersonaPorCargoTests(TestCase):
         resultado = herramientas.persona_por_cargo("analista")
         self.assertTrue(resultado["encontrada"])
         self.assertEqual(resultado["nombre"], "Ana Rojas")
+
+
+class EstadoAsistenteTests(TestCase):
+    """El indicador de modelo en la interfaz: que esta activo y, si no,
+    por que."""
+
+    def setUp(self):
+        cache.clear()
+
+    def test_sin_clave_dice_no_configurado(self):
+        from chat import asistente
+        with override_settings(GEMINI_API_KEY="", OPENAI_API_KEY=""):
+            estado = asistente.estado()
+        self.assertFalse(estado["disponible"])
+        self.assertEqual(estado["motivo"], "sin_clave")
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba")
+    def test_con_clave_y_sin_fallas_esta_disponible(self):
+        from chat import asistente
+        estado = asistente.estado()
+        self.assertTrue(estado["disponible"])
+        self.assertIsNone(estado["motivo"])
+        self.assertEqual(estado["modelo"], settings.GEMINI_MODEL)
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_FALLAS_MAX=1)
+    def test_cuota_agotada_se_distingue_de_clave_invalida(self):
+        from chat import asistente
+        asistente.registrar_falla(RuntimeError("429 RESOURCE_EXHAUSTED"))
+        estado = asistente.estado()
+        self.assertFalse(estado["disponible"])
+        self.assertEqual(estado["motivo"], "cuota_agotada")
+        self.assertIn("cuota", estado["motivo_legible"])
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_FALLAS_MAX=1)
+    def test_clave_invalida_se_distingue_de_cuota(self):
+        from chat import asistente
+        asistente.registrar_falla(RuntimeError("403 PERMISSION_DENIED"))
+        estado = asistente.estado()
+        self.assertEqual(estado["motivo"], "clave_invalida")
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_FALLAS_MAX=1)
+    def test_un_exito_borra_el_motivo_guardado(self):
+        from chat import asistente
+        asistente.registrar_falla(RuntimeError("429"))
+        asistente.registrar_exito()
+        estado = asistente.estado()
+        self.assertTrue(estado["disponible"])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_api_status_incluye_el_estado_del_asistente(self, mocked):
+        cuerpo = self.client.get("/api/status/").json()
+        self.assertIn("asistente", cuerpo)
+        self.assertIn("disponible", cuerpo["asistente"])
+        self.assertIn("modelo", cuerpo["asistente"])

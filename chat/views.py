@@ -816,6 +816,7 @@ def api_status(request):
         "personas_activas": len(personas_map),
         "campos_expuestos": list(buk.CAMPOS_PUBLICOS),
         "documentos": len({s["origen"] for s in documentos.cargar()}),
+        "asistente": asistente.estado(),
     })
 
 

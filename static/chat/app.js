@@ -156,6 +156,11 @@ async function checkConnection() {
   const title = document.querySelector("#connection-title");
   const detail = document.querySelector("#connection-detail");
   const dot = document.querySelector("#signal-dot");
+  const modelDot = document.querySelector("#model-signal-dot");
+  const modelTitle = document.querySelector("#model-signal-title");
+  const modelPill = document.querySelector("#model-signal");
+
+  dot.classList.remove("ok", "error");
   try {
     const response = await fetch("/api/status/");
     const result = await response.json();
@@ -163,10 +168,28 @@ async function checkConnection() {
     dot.classList.add("ok");
     title.textContent = "En línea";
     detail.textContent = `${result.personas_activas} personas`;
+
+    // Que modelo esta respondiendo ahora, y si Gemini no esta disponible,
+    // por que: sin esto una respuesta de respaldo parece un bug del bot.
+    const asistente = result.asistente;
+    if (asistente && modelDot && modelTitle) {
+      modelDot.classList.remove("ok", "off");
+      if (asistente.disponible) {
+        modelDot.classList.add("ok");
+        modelTitle.textContent = asistente.modelo;
+        modelPill.title = `Respondiendo con ${asistente.modelo}.`;
+      } else {
+        modelDot.classList.add("off");
+        modelTitle.textContent = `Reglas · ${asistente.motivo_legible}`;
+        modelPill.title =
+          `${asistente.modelo}: ${asistente.motivo_legible}. ` +
+          "Mientras tanto responden las reglas fijas, sin el modelo.";
+      }
+    }
   } catch (error) {
     dot.classList.add("error");
     title.textContent = "Sin conexión";
-    detail.textContent = error.message ? "" : "";
+    detail.textContent = "";
   }
 }
 
@@ -204,6 +227,9 @@ form.addEventListener("submit", async (event) => {
     messages.setAttribute("aria-busy", "false");
     boton.disabled = false;
     input.focus();
+    // Refresca el indicador de modelo: si esta pregunta agoto la cuota, que
+    // se note al tiro y no recien cuando se recargue la pagina.
+    checkConnection();
   }
 });
 
