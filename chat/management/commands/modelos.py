@@ -11,28 +11,23 @@ from chat import asistente
 
 
 class Command(BaseCommand):
-    help = "Muestra los modelos disponibles para la clave del proveedor activo."
+    help = "Muestra los modelos de Gemini disponibles para la clave configurada."
 
     def handle(self, *args, **opciones):
-        proveedor = asistente.proveedor()
         if not asistente.disponible():
             self.stderr.write(self.style.ERROR(
-                f"No hay clave para {proveedor}. Configurala en .env."))
+                "No hay clave para Gemini. Configura GEMINI_API_KEY en .env."))
             return
 
-        self.stdout.write(f"Proveedor: {proveedor} | configurado: {asistente.modelo()}\n")
+        self.stdout.write(f"Configurado: {asistente.modelo()}\n")
 
         try:
-            if proveedor == "gemini":
-                cliente = asistente._cliente_gemini()
-                nombres = []
-                for m in cliente.models.list():
-                    acciones = getattr(m, "supported_actions", None) or []
-                    if not acciones or "generateContent" in acciones:
-                        nombres.append(m.name.replace("models/", ""))
-            else:
-                cliente = asistente._cliente_openai()
-                nombres = sorted(m.id for m in cliente.models.list())
+            cliente = asistente._cliente_gemini()
+            nombres = []
+            for m in cliente.models.list():
+                acciones = getattr(m, "supported_actions", None) or []
+                if not acciones or "generateContent" in acciones:
+                    nombres.append(m.name.replace("models/", ""))
         except Exception as error:
             self.stderr.write(self.style.ERROR(f"No se pudo consultar: {error}"))
             return

@@ -334,113 +334,18 @@ class RegistroSelectivoTests(TestCase):
         self.assertEqual(ConsultaNoResuelta.objects.count(), 0)
 
 
-class _Llamada:
-    def __init__(self, nombre, argumentos, id_="call_1"):
-        self.id = id_
-        self.function = Mock(name=nombre, arguments=json.dumps(argumentos))
-        self.function.name = nombre
-
-
-class _Mensaje:
-    def __init__(self, content=None, tool_calls=None):
-        self.content = content
-        self.tool_calls = tool_calls or []
-
-    def model_dump(self, **kwargs):
-        return {"role": "assistant", "content": self.content}
-
-
-def _respuesta(mensaje):
-    return Mock(choices=[Mock(message=mensaje)])
-
-
 @SIN_DOCUMENTOS
 class AsistenteTests(TestCase):
-    """El modelo se simula: la suite no gasta tokens ni necesita clave."""
-
     def setUp(self):
         cache.clear()
 
-    @override_settings(ASISTENTE_PROVEEDOR="openai", OPENAI_API_KEY="")
     @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_sin_clave_la_app_sigue_funcionando(self, mock_buk):
-        cuerpo = self.client.post(
-            "/api/chat/", data='{"message":"cuanto es el aguinaldo?"}',
-            content_type="application/json",
-        ).json()
-        self.assertEqual(cuerpo["meta"]["intencion"], "sin_datos")
-
-    @override_settings(ASISTENTE_PROVEEDOR="openai", OPENAI_API_KEY="sk-prueba", ASISTENTE_ANONIMIZAR=False)
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_openai")
-    def test_usa_las_herramientas_y_responde(self, mock_cliente, mock_buk):
-        crear = mock_cliente.return_value.chat.completions.create
-        crear.side_effect = [
-            _respuesta(_Mensaje(tool_calls=[
-                _Llamada("listar_ausencias",
-                         {"desde": _f(0), "hasta": _f(0)})])),
-            _respuesta(_Mensaje(content="Hay 3 personas fuera hoy.")),
-        ]
-        cuerpo = self.client.post(
-            "/api/chat/", data='{"message":"hazme un resumen de la carga del equipo"}',
-            content_type="application/json",
-        ).json()
-        self.assertEqual(cuerpo["meta"]["intencion"], "modelo")
-        self.assertEqual(cuerpo["meta"]["herramientas"], ["listar_ausencias"])
-        self.assertIn("3 personas", cuerpo["answer"])
-
-    @override_settings(ASISTENTE_PROVEEDOR="openai", OPENAI_API_KEY="sk-prueba", ASISTENTE_ANONIMIZAR=False)
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_openai")
-    def test_la_herramienta_no_entrega_el_motivo_de_la_licencia(self, mock_cliente, mock_buk):
+    def test_la_herramienta_no_entrega_el_motivo_de_la_licencia(self, mock_buk):
         from chat import herramientas
         datos = herramientas.listar_ausencias(_f(0), _f(0))
         crudo = json.dumps(datos, ensure_ascii=False)
         for reservado in ("accidente_comun", "accidente comun", "licence_type", "post natal"):
             self.assertNotIn(reservado, crudo)
-
-    @override_settings(ASISTENTE_PROVEEDOR="openai", OPENAI_API_KEY="sk-prueba", ASISTENTE_ANONIMIZAR=True)
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_openai")
-    def test_anonimiza_la_nomina_y_restituye_los_nombres(self, mock_cliente, mock_buk):
-        crear = mock_cliente.return_value.chat.completions.create
-        crear.side_effect = [
-            _respuesta(_Mensaje(tool_calls=[
-                _Llamada("listar_ausencias",
-                         {"desde": _f(0), "hasta": _f(0)})])),
-            _respuesta(_Mensaje(content="Persona 1 esta de vacaciones.")),
-        ]
-        cuerpo = self.client.post(
-            "/api/chat/", data='{"message":"hazme un resumen de la carga del equipo"}',
-            content_type="application/json",
-        ).json()
-        # lo que viajo al modelo no lleva nombres reales
-        enviado = json.dumps(crear.call_args_list[1].kwargs["messages"], ensure_ascii=False)
-        self.assertNotIn("Ana Rojas", enviado)
-        self.assertIn("Persona 1", enviado)
-        # pero el usuario ve el nombre real
-        self.assertIn("Ana", cuerpo["answer"])
-
-    @override_settings(ASISTENTE_PROVEEDOR="openai", OPENAI_API_KEY="sk-prueba")
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_openai")
-    def test_si_el_modelo_falla_la_app_responde_igual(self, mock_cliente, mock_buk):
-        mock_cliente.return_value.chat.completions.create.side_effect = RuntimeError("503")
-        cuerpo = self.client.post(
-            "/api/chat/", data='{"message":"cuanto es el aguinaldo?"}',
-            content_type="application/json",
-        ).json()
-        self.assertEqual(cuerpo["meta"]["intencion"], "sin_datos")
-
-    @override_settings(ASISTENTE_PROVEEDOR="openai", OPENAI_API_KEY="sk-prueba",
-                       ASISTENTE_SIEMPRE=False)
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_openai")
-    def test_las_reglas_responden_sin_llamar_al_modelo(self, mock_cliente, mock_buk):
-        """Lo que el router ya entiende no debe gastar tokens."""
-        self.client.post("/api/chat/", data='{"message":"quien esta fuera hoy"}',
-                         content_type="application/json")
-        mock_cliente.assert_not_called()
 
 
 @SIN_DOCUMENTOS
@@ -492,13 +397,13 @@ class CacheRespuestasTests(TestCase):
         self.assertEqual(fila.veces, 3)
         self.assertEqual(fila.veces_cache, 2)  # la primera no vino de cache
 
-    @override_settings(ASISTENTE_PROVEEDOR="openai", OPENAI_API_KEY="sk-prueba",
+    @override_settings(GEMINI_API_KEY="AIza-prueba",
                        ASISTENTE_SIEMPRE=True, ASISTENTE_ANONIMIZAR=False)
     @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_openai")
+    @patch("chat.asistente._cliente_gemini")
     def test_modo_siempre_manda_todo_al_modelo(self, mock_cliente, mock_buk):
-        crear = mock_cliente.return_value.chat.completions.create
-        crear.side_effect = [_respuesta(_Mensaje(content="Hoy hay 3 personas fuera."))]
+        generar = mock_cliente.return_value.models.generate_content
+        generar.return_value = _respuesta_gemini(texto="Hoy hay 3 personas fuera.")
         cuerpo = self._preguntar("quien esta fuera hoy")
         self.assertEqual(cuerpo["meta"]["intencion"], "modelo")
 
@@ -556,7 +461,7 @@ def _respuesta_gemini(texto=None, llamadas=None, contenido=None):
 
 
 @SIN_DOCUMENTOS
-@override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba",
+@override_settings(GEMINI_API_KEY="AIza-prueba",
                    ASISTENTE_ANONIMIZAR=False, ASISTENTE_SIEMPRE=False)
 class GeminiTests(TestCase):
     """El SDK se simula: la suite no consume cuota gratuita."""
@@ -568,9 +473,8 @@ class GeminiTests(TestCase):
         return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
                                 content_type="application/json").json()
 
-    def test_el_proveedor_por_defecto_es_gemini(self):
+    def test_con_clave_esta_disponible(self):
         from chat import asistente
-        self.assertEqual(asistente.proveedor(), "gemini")
         self.assertTrue(asistente.disponible())
         self.assertEqual(asistente.modelo(), settings.GEMINI_MODEL)
 
@@ -708,7 +612,7 @@ class RuteoComplejoTests(TestCase):
     def setUp(self):
         cache.clear()
 
-    @override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba")
+    @override_settings(GEMINI_API_KEY="AIza-prueba")
     @patch("chat.buk.requests.get", side_effect=fake_get)
     @patch("chat.asistente._cliente_gemini")
     def test_una_comparacion_de_datos_va_al_modelo(self, mock_cliente, mock_buk):
@@ -723,7 +627,7 @@ class RuteoComplejoTests(TestCase):
 
 
 class TimeoutTests(TestCase):
-    @override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba",
+    @override_settings(GEMINI_API_KEY="AIza-prueba",
                        ASISTENTE_TIMEOUT=12)
     def test_el_cliente_de_gemini_lleva_timeout(self):
         """Sin timeout, una llamada colgada deja la pregunta esperando siempre."""
@@ -734,7 +638,7 @@ class TimeoutTests(TestCase):
 
 
 @SIN_DOCUMENTOS
-@override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba",
+@override_settings(GEMINI_API_KEY="AIza-prueba",
                    ASISTENTE_ANONIMIZAR=False)
 class GeminiFirmaTests(TestCase):
     """Gemini 3.x firma cada functionCall y exige recibir la firma de vuelta."""
@@ -766,7 +670,7 @@ class GeminiFirmaTests(TestCase):
 
 
 @SIN_DOCUMENTOS
-@override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba",
+@override_settings(GEMINI_API_KEY="AIza-prueba",
                    ASISTENTE_ANONIMIZAR=False, ASISTENTE_SIEMPRE=False)
 class CombinacionTests(TestCase):
     """Reglas y modelo trabajando juntos: uno cubre al otro."""
@@ -868,7 +772,7 @@ class CortesiaTests(TestCase):
         return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
                                 content_type="application/json").json()
 
-    @override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba",
+    @override_settings(GEMINI_API_KEY="AIza-prueba",
                        ASISTENTE_SIEMPRE=False)
     @patch("chat.buk.requests.get", side_effect=fake_get)
     @patch("chat.asistente._cliente_gemini")
@@ -1638,7 +1542,7 @@ class InfoPersonaTests(TestCase):
         self.assertFalse(resultado["encontrada"])
 
 
-@override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba",
+@override_settings(GEMINI_API_KEY="AIza-prueba",
                    ASISTENTE_ANONIMIZAR=False)
 class MemoriaConversacionTests(TestCase):
     """El modo "todo por el modelo" necesita acordarse de lo ya hablado para
@@ -1797,7 +1701,7 @@ class MarcaNoSeTests(TestCase):
         self.assertFalse(exitosa)
 
 
-@override_settings(ASISTENTE_PROVEEDOR="gemini", GEMINI_API_KEY="AIza-prueba",
+@override_settings(GEMINI_API_KEY="AIza-prueba",
                    ASISTENTE_SIEMPRE=True)
 class RespuestaNoExitosaTests(TestCase):
     """Cuando el modelo se rinde, la pregunta queda registrada como 'sin
@@ -1996,7 +1900,7 @@ class EstadoAsistenteTests(TestCase):
 
     def test_sin_clave_dice_no_configurado(self):
         from chat import asistente
-        with override_settings(GEMINI_API_KEY="", OPENAI_API_KEY=""):
+        with override_settings(GEMINI_API_KEY=""):
             estado = asistente.estado()
         self.assertFalse(estado["disponible"])
         self.assertEqual(estado["motivo"], "sin_clave")
@@ -2017,6 +1921,18 @@ class EstadoAsistenteTests(TestCase):
         self.assertFalse(estado["disponible"])
         self.assertEqual(estado["motivo"], "cuota_agotada")
         self.assertIn("cuota", estado["motivo_legible"])
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_FALLAS_MAX=1)
+    def test_prepago_agotado_se_distingue_de_cuota_gratis(self):
+        """Con facturacion activa, un 429 significa saldo prepagado en cero,
+        no el limite de 20/dia del free tier: el aviso tiene que ser otro."""
+        from chat import asistente
+        asistente.registrar_falla(RuntimeError(
+            "429 RESOURCE_EXHAUSTED. Your prepayment credits are depleted. "
+            "Please go to AI Studio to manage your billing."))
+        estado = asistente.estado()
+        self.assertEqual(estado["motivo"], "prepago_agotado")
+        self.assertIn("prepagados", estado["motivo_legible"])
 
     @override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_FALLAS_MAX=1)
     def test_clave_invalida_se_distingue_de_cuota(self):

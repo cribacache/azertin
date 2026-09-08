@@ -4,8 +4,9 @@ Se usa solo como respaldo: lo que el router de reglas ya entiende se responde
 sin gastar tokens. El modelo no recibe la clave de BUK ni el payload crudo, solo
 puede llamar a las funciones declaradas en `herramientas.ESQUEMAS`.
 
-Hay dos proveedores. Lo unico que cambia entre ellos es el bucle de llamadas:
-las herramientas, el prompt y la anonimizacion son los mismos.
+Solo Gemini: es el proveedor con presupuesto aprobado. Hubo un respaldo con
+OpenAI mientras se evaluaba, pero se saco del todo al confirmarse Gemini, para
+no dejar una segunda ruta sin financiar a medio programar.
 """
 
 import json
@@ -119,6 +120,7 @@ CLAVE_MOTIVO = "asistente:motivo"
 # disponible": no es lo mismo quedarse sin cuota gratis que tener la clave mal.
 MOTIVOS_LEGIBLES = {
     "cuota_agotada": "se agotó la cuota gratuita por hoy",
+    "prepago_agotado": "se agotaron los créditos prepagados en Google AI Studio",
     "clave_invalida": "la clave de API no es válida",
     "error_proveedor": "el proveedor no está respondiendo",
 }
@@ -126,6 +128,11 @@ MOTIVOS_LEGIBLES = {
 
 def _clasificar_error(error):
     texto = str(error or "")
+    # Con facturacion activada, un 429 ya no es el limite gratis de 20/dia:
+    # es que el saldo prepagado de la cuenta se vacio. Mismo codigo HTTP, aviso
+    # bien distinto para quien tiene que ir a recargar.
+    if "prepayment" in texto.lower() or "prepago" in texto.lower():
+        return "prepago_agotado"
     if "RESOURCE_EXHAUSTED" in texto or "429" in texto:
         return "cuota_agotada"
     if any(p in texto for p in ("PERMISSION_DENIED", "API_KEY_INVALID", "401", "403")):
@@ -159,16 +166,12 @@ def registrar_exito():
     cache.delete(CLAVE_MOTIVO)
 
 
-def proveedor():
-    return (settings.ASISTENTE_PROVEEDOR or "gemini").lower()
-
-
 def clave():
-    return settings.GEMINI_API_KEY if proveedor() == "gemini" else settings.OPENAI_API_KEY
+    return settings.GEMINI_API_KEY
 
 
 def modelo():
-    return settings.GEMINI_MODEL if proveedor() == "gemini" else settings.OPENAI_MODEL
+    return settings.GEMINI_MODEL
 
 
 def disponible():
@@ -180,23 +183,23 @@ def estado():
     """Para la interfaz: que modelo esta activo y, si no lo esta, por que.
 
     No expone nada nuevo que la interfaz no supiera ya (el nombre del modelo
-    y el proveedor ya se mandan en cada respuesta): solo lo junta en un solo
-    lugar para pintarlo apenas se carga la pagina, sin esperar una pregunta.
+    ya se manda en cada respuesta): solo lo junta en un solo lugar para
+    pintarlo apenas se carga la pagina, sin esperar una pregunta.
     """
     if not clave():
         return {
-            "disponible": False, "proveedor": proveedor(), "modelo": modelo(),
+            "disponible": False, "proveedor": "gemini", "modelo": modelo(),
             "motivo": "sin_clave",
-            "motivo_legible": f"no hay clave de API configurada para {proveedor()}",
+            "motivo_legible": "no hay clave de API configurada para Gemini",
         }
     if en_pausa():
         motivo = cache.get(CLAVE_MOTIVO) or "error_proveedor"
         return {
-            "disponible": False, "proveedor": proveedor(), "modelo": modelo(),
+            "disponible": False, "proveedor": "gemini", "modelo": modelo(),
             "motivo": motivo, "motivo_legible": MOTIVOS_LEGIBLES[motivo],
         }
     return {
-        "disponible": True, "proveedor": proveedor(), "modelo": modelo(),
+        "disponible": True, "proveedor": "gemini", "modelo": modelo(),
         "motivo": None, "motivo_legible": None,
     }
 
@@ -272,7 +275,8 @@ def _cliente_gemini():
 
 
 def _declaraciones_gemini():
-    """Reutiliza los mismos esquemas JSON que usa OpenAI."""
+    """Traduce `herramientas.ESQUEMAS` (JSON Schema generico) al formato de
+    Google."""
     from google.genai import types
 
     funciones = [
@@ -359,76 +363,17 @@ def _responder_gemini(mensaje, hoy, contexto=None, historial_previo=None, alias=
                   "historial": historial_previo or [], "alias": alias}
 
 
-# --------------------------------------------------------------------------
-# OpenAI
-# --------------------------------------------------------------------------
-
-def _cliente_openai():
-    from openai import OpenAI
-
-    return OpenAI(api_key=settings.OPENAI_API_KEY, timeout=settings.ASISTENTE_TIMEOUT)
-
-
-def _responder_openai(mensaje, hoy, contexto=None):
-    cliente = _cliente_openai()
-    alias, llamadas, pasos = {}, [], 0
-    mensajes = [
-        {"role": "system", "content": INSTRUCCIONES.format(hoy=hoy.isoformat())},
-        {"role": "user", "content": _con_contexto(mensaje, contexto, alias)},
-    ]
-
-    while pasos < settings.ASISTENTE_MAX_PASOS:
-        pasos += 1
-        respuesta = cliente.chat.completions.create(
-            model=settings.OPENAI_MODEL,
-            messages=mensajes,
-            tools=herramientas.ESQUEMAS,
-            tool_choice="auto",
-            temperature=0,
-        )
-        eleccion = respuesta.choices[0].message
-
-        if not eleccion.tool_calls:
-            texto = (eleccion.content or "").strip()
-            if settings.ASISTENTE_ANONIMIZAR:
-                texto = _restaurar(texto, alias)
-            texto, exitosa = _separar_exito(texto)
-            return texto, {"pasos": pasos, "herramientas": llamadas, "exitosa": exitosa}
-
-        mensajes.append(eleccion.model_dump(exclude_none=True))
-        for llamada in eleccion.tool_calls:
-            try:
-                argumentos = json.loads(llamada.function.arguments or "{}")
-            except json.JSONDecodeError:
-                argumentos = {}
-            resultado = _ejecutar(llamada.function.name, argumentos, alias, llamadas)
-            mensajes.append({
-                "role": "tool",
-                "tool_call_id": llamada.id,
-                "content": json.dumps(resultado, ensure_ascii=False, default=str),
-            })
-
-    return None, {"pasos": pasos, "herramientas": llamadas, "agotado": True}
-
-
 def responder(mensaje, hoy, contexto=None, historial=None, alias=None):
-    """Devuelve (texto, meta). Lanza SinConfigurar o el error del proveedor.
+    """Devuelve (texto, meta). Lanza SinConfigurar o el error de Gemini.
 
     `contexto` es lo que las reglas ya consultaron: entregarselo evita que el
-    modelo gaste un viaje extra pidiendo datos que ya tenemos.
-    `historial` y `alias` son la memoria de la conversacion (ver `views.py`);
-    solo Gemini los usa por ahora, OpenAI queda como respaldo sin memoria.
+    modelo gaste un viaje extra pidiendo datos que ya tenemos. `historial` y
+    `alias` son la memoria de la conversacion (ver `views.py`).
     """
     if not clave():
-        raise SinConfigurar(
-            f"No hay clave para {proveedor()}. Configura "
-            f"{'GEMINI_API_KEY' if proveedor() == 'gemini' else 'OPENAI_API_KEY'} en .env"
-        )
+        raise SinConfigurar("No hay clave para Gemini. Configura GEMINI_API_KEY en .env")
     try:
-        if proveedor() == "gemini":
-            resultado = _responder_gemini(mensaje, hoy, contexto, historial, alias)
-        else:
-            resultado = _responder_openai(mensaje, hoy, contexto)
+        resultado = _responder_gemini(mensaje, hoy, contexto, historial, alias)
     except Exception as error:
         registrar_falla(error)
         raise

@@ -161,25 +161,19 @@ bancaria, previsión), el **motivo de una licencia médica** (`licence_type`: pr
 natal, accidente común, etc.) se descarta en `chat/buk.py` al normalizar el
 registro. Es información de salud y no entra a la aplicación.
 
-## Respaldo con modelo de lenguaje (opcional)
+## Modelo de lenguaje: Gemini
 
 Sin clave, la aplicación funciona igual: responde con reglas y dice "no cuento
 con esa información" para el resto. Con clave, lo que las reglas no entienden
-pasa a un modelo.
+(o todo, si `ASISTENTE_SIEMPRE=True`) pasa por Gemini.
 
-Hay dos proveedores. Lo único que cambia entre ellos es el bucle de llamadas en
-`chat/asistente.py`: las herramientas, el prompt y la anonimización son los
-mismos.
+Es el único proveedor — hubo un respaldo con OpenAI mientras se evaluaba el
+gasto, se sacó del código al aprobarse el presupuesto de Gemini.
 
 ```bash
-# en .env — Gemini (tiene capa gratuita)
-ASISTENTE_PROVEEDOR=gemini
+# en .env
 GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-2.0-flash
-
-# o bien OpenAI (requiere saldo, no tiene capa gratuita)
-ASISTENTE_PROVEEDOR=openai
-OPENAI_API_KEY=sk-...
+GEMINI_MODEL=gemini-3.6-flash
 ```
 
 Los nombres de modelo cambian seguido, y no todos siguen disponibles para

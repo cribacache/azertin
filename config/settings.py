@@ -140,10 +140,8 @@ BUK_ABSENCE_CACHE_TTL = int(os.getenv("BUK_ABSENCE_CACHE_TTL", "60"))
 # curso; la vacacion mas larga registrada dura 58 dias.
 BUK_VACACIONES_MARGEN = timedelta(days=int(os.getenv("BUK_VACACIONES_MARGEN_DIAS", "120")))
 
-# Modelo de lenguaje. Se usa solo como respaldo del router de reglas: sin clave,
-# la aplicacion funciona igual y responde "no tengo esa informacion".
-# ASISTENTE_PROVEEDOR: "gemini" (tiene capa gratuita) u "openai".
-ASISTENTE_PROVEEDOR = os.getenv("ASISTENTE_PROVEEDOR", "gemini").lower()
+# Modelo de lenguaje: solo Gemini, con presupuesto aprobado (antes existia un
+# respaldo con OpenAI mientras se evaluaba; se saco al confirmarse el pago).
 ASISTENTE_TIMEOUT = int(os.getenv("ASISTENTE_TIMEOUT", "18"))
 
 # Si el proveedor falla varias veces seguidas se deja de llamar por un rato y
@@ -155,14 +153,10 @@ ASISTENTE_MAX_PASOS = int(os.getenv("ASISTENTE_MAX_PASOS", "4"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
 # Ningun test debe llamar a la API ni gastar tokens ni cuota. Los tests del
 # asistente inyectan una clave falsa con override_settings y simulan el cliente.
 if "test" in sys.argv:
     GEMINI_API_KEY = ""
-    OPENAI_API_KEY = ""
 
 # True = todas las preguntas pasan por el modelo (responde mejor, cuesta mas).
 # False = el modelo solo atiende lo que las reglas no entienden.
