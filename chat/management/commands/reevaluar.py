@@ -7,8 +7,6 @@ respuesta en ningun documento, la pregunta sigue abierta y aparece en el
 listado, que es justamente la lista de que documentar.
 """
 
-from datetime import date
-
 from django.core.cache import cache
 from django.core.management.base import BaseCommand
 
@@ -37,19 +35,21 @@ class Command(BaseCommand):
             self.stdout.write("No hay consultas pendientes.")
             return
 
-        # Se prueba el sistema COMPLETO, no solo los documentos: varias
-        # pendientes hoy las resuelve una regla nueva (cumpleanos, quien esta
-        # trabajando, filtro por area) sin que exista documento alguno.
-        from chat import views
+        # Se prueba el sistema COMPLETO: cada pregunta pasa por Gemini con las
+        # herramientas de verdad, asi que esto gasta cuota. "Cubierta" es
+        # solo la que el modelo pudo responder (intencion "modelo"): si no
+        # hay clave, si esta en pausa por fallas, o si el modelo dijo NO_SE,
+        # sigue sin responderse igual que antes.
+        from chat.views import responder_con_modelo
 
         cubiertas, sin_cubrir = [], []
         for fila in pendientes:
             try:
-                respuesta = views._resolver(fila.mensaje, date.today())
+                respuesta = responder_con_modelo(fila.mensaje)
             except Exception:
                 respuesta = None
             intencion = (respuesta or {}).get("meta", {}).get("intencion", "")
-            if intencion and intencion not in ("sin_datos", "ayuda"):
+            if intencion == "modelo":
                 cubiertas.append((fila, intencion,
                                   (respuesta.get("answer") or "")[:60]))
             else:

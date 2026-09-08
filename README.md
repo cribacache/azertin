@@ -41,17 +41,22 @@ reporta que nadie está de vacaciones.
 
 ## Qué entiende el chat
 
-El router de `chat/intents.py` traduce la pregunta a una categoría y un rango, y
-`chat/buk.py` la resuelve contra la fuente que corresponda. Ejemplos:
+Toda pregunta la responde Gemini: decide qué herramienta de
+`chat/herramientas.py` llamar (o si no necesita ninguna) y redacta la
+respuesta con lo que esas herramientas le devuelven. No hay un router de
+reglas por delante — ver [Modelo de lenguaje: Gemini](#modelo-de-lenguaje-gemini).
 
-| Pregunta | Fuente |
+Las herramientas resuelven contra `chat/buk.py`, que le pide a BUK la fuente
+que corresponde:
+
+| Pregunta | Herramienta → fuente |
 | --- | --- |
-| ¿Quién está fuera hoy? | `/vacations` + `/absences`, combinadas |
-| ¿Quién está de vacaciones hoy? | `/vacations` |
-| Días administrativos en septiembre | `/vacations`, subtipo `dias_administrativos` |
-| Licencias médicas esta semana | `/absences?type=licence` |
-| ¿Quién faltó ayer? | `/absences?type=absence` |
-| ¿Cuántas personas hay activas? | solo el directorio cacheado |
+| ¿Quién está fuera hoy? | `listar_ausencias` → `/vacations` + `/absences`, combinadas |
+| ¿Quién está de vacaciones hoy? | `listar_ausencias` → `/vacations` |
+| Días administrativos en septiembre | `listar_ausencias`, subtipo `dias_administrativos` |
+| Licencias médicas esta semana | `listar_ausencias` → `/absences?type=licence` |
+| ¿Quién faltó ayer? | `listar_ausencias` → `/absences?type=absence` |
+| ¿Cuántas personas hay activas? | `dotacion` → solo el directorio cacheado |
 
 **Las vacaciones no están en `/absences`.** Viven en `/vacations` (tipos
 `legales`, `dias_administrativos`, `progresivas`, `dias_adicionales`). El
@@ -82,22 +87,16 @@ hay vacaciones involucradas, **0** si la respuesta está cacheada.
 
 ## Preguntas por una persona
 
-Si la pregunta nombra a alguien de la nómina, el asistente responde en texto
-sobre esa persona en vez de listar a todo el mundo:
+Si la pregunta nombra a alguien de la nómina, Gemini usa `ausencias_de_persona`
+o `info_persona` (según si se pregunta por disponibilidad o por identidad/
+cargo/cuentas) en vez de listar a todo el mundo — la instrucción está en
+`INSTRUCCIONES` dentro de `chat/asistente.py`.
 
-```
-¿Claudio Lizama está con licencia?
-→ Claudio Lizama Espinoza tiene licencia medica del 25 de agosto al 8 de
-  septiembre (Director/a - Comunicaciones).
-
-¿Elisa está con licencia hoy?
-→ Elisa Eliana Palomino Marchant no registra ausencias hoy. Segun BUK, esta en
-  su jornada.
-```
-
-El nombre se resuelve contra el directorio en `chat/personas.py`. Basta el
-nombre o el apellido (`¿cuándo vuelve Duk?`). Si coincide con varias personas,
-lo dice y pide el apellido en vez de adivinar.
+El nombre se resuelve contra el directorio con `chat/personas.py::buscar`.
+Basta el nombre o el apellido (`¿cuándo vuelve Duk?`). Si no encuentra a nadie
+o coincide con varias personas, la herramienta se lo dice a Gemini
+(`"encontrada": false`, con los candidatos si los hay) y el modelo se lo
+explica al usuario en vez de inventar o adivinar.
 
 ## Documentos internos
 
@@ -129,16 +128,19 @@ mismas palabras y no responde nada.
 - Las ligaduras de PDF (`ﬁ`, `ﬂ`) se descomponen al normalizar. Sin eso,
   "planiﬁcación" nunca coincide con "planificación" y la sección queda invisible.
 
-Al modelo se le entregan las **tres** mejores secciones, no una: una pregunta
-suele cruzar dos, y componer es lo que el modelo hace bien.
-
-Las preguntas de procedimiento se enrutan a los documentos aunque mencionen
-palabras de BUK: `¿cómo pido vacaciones?` responde con la política, no con la
-lista de quién está de vacaciones.
+A la herramienta `buscar_politica` se le entregan las **tres** mejores
+secciones, no una: una pregunta suele cruzar dos, y componer es lo que el
+modelo hace bien. Gemini decide solo cuándo llamarla — por ejemplo, `¿cómo
+pido vacaciones?` es procedimiento y usa `buscar_politica`, no
+`listar_ausencias`, aunque comparta la palabra "vacaciones" con una pregunta
+de disponibilidad.
 
 ## Preguntas que no supo responder
 
-Cuando no puede responder, el asistente lo dice y guarda la pregunta:
+Cuando ninguna herramienta le da lo que necesita, Gemini tiene que decirlo con
+la marca `NO_SE:` en vez de responder con generalidades (ver `INSTRUCCIONES`
+en `chat/asistente.py`). El usuario nunca ve esa marca: `chat/asistente.py`
+la separa, y la pregunta queda registrada:
 
 ```bash
 python manage.py consultas
@@ -163,9 +165,10 @@ registro. Es información de salud y no entra a la aplicación.
 
 ## Modelo de lenguaje: Gemini
 
-Sin clave, la aplicación funciona igual: responde con reglas y dice "no cuento
-con esa información" para el resto. Con clave, lo que las reglas no entienden
-(o todo, si `ASISTENTE_SIEMPRE=True`) pasa por Gemini.
+Gemini responde el 100% de las preguntas. No hay un router de reglas detrás:
+si no hay clave, si se acabaron los créditos o la cuota, o si el proveedor no
+responde, el asistente lo dice explícitamente (`chat/views.py::responder_no_disponible`)
+en vez de contestar con una versión degradada.
 
 Es el único proveedor — hubo un respaldo con OpenAI mientras se evaluaba el
 gasto, se sacó del código al aprobarse el presupuesto de Gemini.
@@ -196,36 +199,38 @@ Los modelos Gemini 3.x firman cada `functionCall` con un `thought_signature` y
 `400 INVALID_ARGUMENT`.
 
 **Al modelo no se le entrega la API de BUK.** Solo puede llamar a las funciones
-declaradas en `chat/herramientas.py`, que reutilizan la misma capa sanitizada
-que usa el router:
+declaradas en `chat/herramientas.py`, que sanitizan lo que sale de BUK, los
+documentos y la planilla de cuentas:
 
 | Herramienta | Qué hace |
 | --- | --- |
 | `listar_ausencias` | quién no está en su jornada en un rango |
 | `ausencias_de_persona` | situación de una persona (resuelve el nombre localmente) |
+| `info_persona` | quién es alguien: cargo, área y cuentas que atiende |
+| `equipo_de` | quién compone una cuenta/cliente o un área |
+| `persona_por_cargo` | quién ocupa un cargo, cuando la pregunta no nombra a nadie |
+| `cumpleanos` | quién cumple años en un rango (solo día y mes) |
 | `dotacion` | cantidad de personas activas |
 | `buscar_politica` | busca en los documentos de `datos/` |
 
 La clave de BUK nunca sale del backend, el modelo no ve el payload crudo, y el
 motivo de una licencia médica ya viene descartado desde `chat/buk.py`.
 
-### Cómo se combinan las reglas y el modelo
+### Qué pasa si Gemini no está disponible
 
-El modelo no reemplaza al router: se apoyan mutuamente.
+No hay reglas de respaldo detrás: si Gemini no responde, el chat lo dice.
 
-- **Las reglas le adelantan los datos.** Antes de llamar al modelo, el router
-  resuelve el rango de fechas y consulta BUK, y le pasa el resultado en el
-  mensaje. Así el modelo responde en una sola llamada en vez de gastar una
-  vuelta pidiendo con una herramienta lo que ya teníamos.
-- **Las reglas quedan de red.** Esa misma consulta se guarda como respaldo. Si
-  el modelo falla o se demora, se entrega la respuesta de las reglas marcada
-  como parcial, en vez de un "no tengo esa información".
 - **Cortacircuitos.** Tras `ASISTENTE_FALLAS_MAX` fallas seguidas (3), se deja
-  de llamar al proveedor por `ASISTENTE_PAUSA_SEGUNDOS` (180) y responden solo
-  las reglas, al instante. Una respuesta exitosa lo reactiva.
-
-El contexto adelantado pasa por la misma anonimización que los resultados de las
-herramientas; si no, sería un atajo que la burla.
+  de llamar al proveedor por `ASISTENTE_PAUSA_SEGUNDOS` (180): las siguientes
+  preguntas reciben el aviso al instante, sin esperar el timeout de cada
+  intento. Una respuesta exitosa lo reactiva.
+- **El motivo se clasifica y se muestra.** `chat/asistente.py::_clasificar_error`
+  distingue sin clave, cuota gratuita agotada, créditos prepagados agotados, y
+  clave inválida — el indicador junto al logo en la interfaz (y
+  `GET /api/status/`) muestra cuál es.
+- **Nada de esto se cachea.** Una respuesta de "no disponible" no se guarda en
+  el caché de `chat/respuestas.py`: si se cacheara, seguiría mostrándose
+  después de que Gemini se recupere.
 
 ## Cumpleaños
 
@@ -236,88 +241,43 @@ octubre`. Los 98 empleados activos tienen la fecha en BUK.
 para saludar a nadie y es un dato sensible: se descarta en `chat/buk.py` y no
 cruza esa capa.
 
-Si nadie cumple en la fecha preguntada, muestra los próximos dentro de
-`CUMPLE_HORIZONTE_DIAS` (45). Responder "nadie" a secas no sirve; lo útil es
-saber a quién hay que saludar pronto.
+La herramienta `cumpleanos(desde, dias)` devuelve a quién le toca dentro de ese
+rango; ampliar el rango cuando nadie cumple justo esa fecha ("mostrar los
+próximos") ya no es un comportamiento fijo del código, sino algo que Gemini
+puede decidir hacer llamando la herramienta de nuevo con más días.
 
 Los días que faltan se cuentan **desde hoy**, no desde el inicio del rango: al
 preguntar por "este mes" el día 7, uno del día 6 se marca "ya pasó" en vez de
-"en 5 días".
+"en 5 días" (`chat/buk.py::cumpleanos`).
 
 ## Quiénes componen un equipo
 
 `¿quiénes están en el equipo de CENCOSUD?` es una pregunta distinta de `¿quién
-está disponible en CENCOSUD?`: la primera es por composición, la segunda por
-disponibilidad de hoy. Solo existía la segunda, así que la primera terminaba en
-"todavía no tengo esa información".
+está disponible en CENCOSUD?`: la primera es por composición (`equipo_de`), la
+segunda por disponibilidad de hoy (`listar_ausencias`, filtrando por lo que
+`equipo_de` devuelve). `INSTRUCCIONES` en `chat/asistente.py` le deja claro a
+Gemini cuál es cuál.
 
-Si además se nombra a una persona, se responde sí o no, y dónde sí está:
+Gemini tiene el historial de la conversación (`chat/asistente.py`, memoria en
+la sesión) y lo usa para entender un seguimiento corto ("y están disponibles?"
+después de preguntar por un equipo) sin que el usuario repita el nombre — pero
+la decisión de a qué se refiere el seguimiento la toma el modelo, no una regla
+de código.
 
-```
-Taqui está en el equipo de Santander??
-→ No, Francisco "Taqui" Gastón Ramdohr Browne no está en BANCO SANTANDER.
-  Está en AES ANDES, CENCOSUD, GRUPO COSTANERA...
-```
+## Quién está disponible
 
-La disponibilidad gana cuando la pregunta trae señal temporal (`quién está
-trabajando **hoy** en Cencosud`), porque ahí sí se pregunta por el día.
+`¿quién está trabajando hoy?`, `¿está todo el equipo?`. No hay una herramienta
+dedicada a esto: Gemini lo calcula combinando `dotacion` (el total) con
+`listar_ausencias` (quién no está), y arma la lista o el resumen según lo que
+se haya preguntado. Es una diferencia real frente al router de reglas que
+había antes — ahí el cálculo y el formato de la respuesta eran fijos; ahora
+depende de que el modelo razone bien con los datos de ambas herramientas.
 
-### El equipo se hereda entre preguntas
-
-```
-usuario> ¿quiénes están en el equipo de Cencosud?
-azertin> 20 personas en CENCOSUD. [...]
-usuario> están disponibles
-azertin> 19 de 20 personas de CENCOSUD están en su jornada hoy; 1 está fuera.
-```
-
-Es una sola conversación, pero heredar es peligroso: la primera versión heredaba
-siempre que la pregunta nueva no nombrara otro equipo, y la conversación se
-quedaba pegada a un cliente — `necesito saber quien esta de vacaciones`
-respondía por CENCOSUD.
-
-Ahora **solo se hereda en fragmentos que no se entienden solos**: cinco palabras
-o menos y sin pronombre interrogativo. Una pregunta con `quién`, `cuántos` o
-`cuál` abre su propio alcance y nunca hereda.
-
-Tres formas de salir del equipo:
-
-- Nombrar otro (`¿y en prensa?`).
-- Decirlo (`en general`, `de toda la empresa`, `todos`), que además lo olvida.
-- Recargar la página: `/api/status/` limpia el contexto al cargar.
-
-La respuesta menciona el equipo heredado para que la suposición quede a la
-vista, y el contexto expira a los 180 s.
-
-## Quién sí está disponible
-
-`¿quién está trabajando hoy?`, `¿está todo el equipo?`, `¿qué ejecutivos están
-disponibles?`. Es la nómina menos los ausentes.
-
-Acepta tres filtros combinables: **cuenta** (`de CENCOSUD`), **área** (`en
-prensa`) y **familia de cargo** (`qué ejecutivos`, `los directores`). Las
-familias vienen de `current_job.role.role_family`: Ejecutivos (23), Consultores
-Senior (19), Consultores (14), Directores (13), Socios Directores (8),
-Administrativos, Directores Senior, Gerentes, Socios Fundadores.
-
-```
-que ejecutivos estan disponibles hoy de cencosud
-→ Están los 4 ejecutivos de CENCOSUD en su jornada hoy.
-  + los cuatro nombres
-```
-
-Cuando hay filtro y el grupo cabe en `LISTAR_HASTA` (25) se listan los nombres:
-preguntar "qué ejecutivos" y recibir solo un número no responde la pregunta.
-
-**Ojo con `disponible`.** Estuvo en la lista de palabras de ausencia, que
-significa lo contrario, y `que ejecutivos estan disponibles` contestaba quiénes
-estaban fuera. Si se agregan sinónimos conviene revisar de qué lado quedan.
-
-**Las cuentas por persona y tipo.** Los listados muestran una fila por persona y
-tipo de ausencia, no una por registro: quien parte sus vacaciones en tres tramos
-aparecía tres veces y el total decía "6 personas" cuando eran 4. Se agrupa por
-(persona, tipo) y no solo por persona, porque alguien puede tener vacaciones y
-licencia a la vez.
+**Ojo:** `listar_ausencias` devuelve un registro por cada tramo, no uno por
+persona — quien parte sus vacaciones en tres tramos aparece tres veces en la
+lista. El router de reglas que había antes los agrupaba antes de contar; ahora
+esa suma la tiene que hacer Gemini razonando sobre la lista cruda, así que
+"cuántas personas" es más frágil que antes para casos con tramos partidos.
 
 ## Apodos
 
@@ -347,50 +307,15 @@ no disparen una búsqueda de persona en cualquier frase.
 
 Si alguien no tiene apodo (15 de 98), se muestra el nombre completo sin más.
 
-### El nombre manda sobre el verbo
+### Nombre ambiguo o no encontrado
 
-`felipe toro está disponible?` pregunta por Felipe, no por la nómina entera. Si
-la pregunta nombra a alguien, esa persona se resuelve **antes** que la vista de
-grupo: antes la palabra "disponible" se llevaba la pregunta y contestaba
-"88 de 98 personas...", ignorando el nombre.
-
-La cortesía va todavía antes: un "hola" no tiene por qué gastar una consulta al
-directorio buscando a alguien que no se nombró.
-
-### Nombres mal escritos
-
-`felipe garrid` → *¿Querrás decir Felipe Josué Andrés Garrido Corvalan?* Se
-responde `sí` y contesta la pregunta original.
-
-La sugerencia **refina** lo ya encontrado en vez de reemplazarlo: `felipe
-garrid` se queda con el Felipe apellidado Garrido, no con la otra persona de ese
-apellido.
-
-Solo se consideran palabras que se parecen mucho a un nombre real (`PARECIDO`,
-0.78) y que no son vocabulario de pregunta. Eso último importa: **"años" se
-parece a "Llanos"**, y sin la exclusión `¿quién cumple años este mes?` terminaba
-respondiendo por una persona.
-
-Hay cinco "Javi" en la nómina. El asistente las numera y espera la aclaración:
-
-```
-usuario> ¿está la Javi hoy?
-azertin> Hay 5 personas que coinciden. ¿Por cuál preguntas?
-         1. Javiera "Javi" Almendra Narváez Ojeda
-         ...
-         4. Javiera "Javi" Ignacia Moreno Soza
-usuario> Moreno
-azertin> Javiera "Javi" Ignacia Moreno Soza tiene vacaciones del 4 al 11 de septiembre.
-```
-
-Responde la **pregunta original**, no la aclaración: preguntaste si estaba, no
-por el número 4. Acepta el número (`2`, `la 3`), el ordinal (`la segunda`) o un
-apellido.
-
-La opción pendiente vive en la sesión y dura `DESAMBIGUACION_SEGUNDOS` (180). Si
-la respuesta no aclara —`¿y quién está de vacaciones?`— no adivina: la trata
-como una pregunta nueva. Elegir al azar entre cinco personas es peor que volver
-a preguntar.
+`chat/personas.py::buscar` no adivina: si el nombre no coincide con nadie, o
+coincide con varias personas (hay cinco "Javi" en la nómina), la herramienta
+se lo dice a Gemini tal cual —`"encontrada": false`, con los candidatos si los
+hay— y el modelo decide cómo pedir la aclaración, apoyado en el historial de
+la conversación para entender la respuesta del usuario en el siguiente
+mensaje. No hay una lista numerada ni un manejo especial de "responde con el
+número 2" a nivel de código: eso, si ocurre, lo resuelve el modelo.
 
 ## Cuentas y clientes
 
@@ -400,12 +325,6 @@ cuentas y 548 asignaciones. Se cruza con BUK por RUT.
 BUK tiene un campo `Cuentas` en `custom_attributes` pero está **vacío en los 98
 empleados**, así que la planilla es la única fuente. Si algún día se llena en
 BUK, conviene cambiar la fuente y dejar de depender del archivo.
-
-```
-¿quién está trabajando hoy en CENCOSUD?      → 19 de 20 en su jornada
-¿quién está de vacaciones en Mutual?         → 1 persona
-¿quién trabaja hoy en el equipo de Santander? → 8 de 9, en BANCO SANTANDER
-```
 
 Se reconoce la cuenta de tres formas, de más a menos específica: el nombre
 completo tal cual (`aguas andinas`), una palabra que pertenece a una sola cuenta
@@ -435,30 +354,20 @@ Paid Media, Audiovisual.
 Se detectan comparando con los nombres reales de BUK, no con una lista escrita a
 mano: si crean un área nueva funciona sin tocar código.
 
-**BUK no guarda la asignación por cliente** (`current_job.project` viene vacío).
-Ante `¿quién trabaja hoy en el equipo de Santander?` el asistente lo dice y
-ofrece las áreas disponibles, en vez de responder por toda la empresa ignorando
-el filtro — que es lo que hacía antes.
+**BUK no guarda la asignación por cliente** (`current_job.project` viene vacío):
+`equipo_de` solo encuentra cuentas o áreas reales. Ante un grupo que no es
+ninguna de las dos, la herramienta devuelve `"encontrado": false` y es Gemini
+quien decide cómo explicarlo, en vez de responder por toda la empresa
+ignorando el filtro.
 
-### Orden de resolución
+### Cómo decide Gemini qué hacer
 
-1. Cortesía (saludos, gracias, despedidas, "¿quién eres?") — instantáneo, sin
-   BUK y sin modelo. Un saludo no necesita datos: gastarle una llamada al
-   proveedor cuesta cuota y segundos, y si está caído termina respondiendo
-   "no tengo esa información" a un "Hola".
-2. Router de reglas — instantáneo, sin tokens. Cubre las preguntas frecuentes.
-3. Persona nombrada en la pregunta.
-4. Documentos de `datos/`.
-5. Modelo de lenguaje.
-6. Respaldo de las reglas si el modelo falla; si tampoco hay, "todavía no tengo
-   esa información" + registro en `manage.py consultas`.
-
-La cortesía se evalúa **al final** del router, no al principio: así "hola,
-¿quién está fuera hoy?" se responde como la consulta que es, y no como un
-saludo.
-
-Como el modelo es el último recurso, solo paga tokens la cola larga. Si falla o
-se cae la API, la aplicación responde igual con el paso 5.
+No hay un orden de resolución fijo en código: cada pregunta se manda a Gemini
+con las ocho herramientas disponibles y es el modelo quien decide, turno a
+turno, si responde directo (un saludo, una despedida), llama una herramienta,
+o dice que no sabe con la marca `NO_SE:`. Ese criterio vive en `INSTRUCCIONES`
+(`chat/asistente.py`), no en un router de código: cambiarlo es editar el
+prompt, no reordenar funciones.
 
 ### Anonimizar la nómina
 
@@ -499,7 +408,7 @@ Reacciona a la conversación con `data-estado`:
 | `reposo` | por defecto | flota suave |
 | `pensando` | esperando la respuesta | se ladea, más rápido |
 | `feliz` | respuesta correcta, o al hacerle clic | salto con aplaste y estiramiento |
-| `apenado` | respuesta de respaldo o error | se encoge y se ladea hacia abajo |
+| `apenado` | Gemini no disponible, o error de red | se encoge y se ladea hacia abajo |
 
 Lleva `aria-hidden` y respeta `prefers-reduced-motion`. El PNG 3D que se usaba
 antes quedó en `assets/mascota-3d.png` por si se quiere volver a él.
@@ -540,15 +449,6 @@ python manage.py consultas --frecuentes
 Muestra cada pregunta, cuántas veces se hizo, cuántas se sirvieron de caché y
 cuántas resolvió el modelo. El porcentaje al final dice qué proporción no costó
 nada.
-
-## Preguntas que las reglas no deben contestar
-
-Comparaciones, agregaciones, filtros por área o causas (`¿qué área tiene más
-ausencias?`, `compara agosto con septiembre`) son preguntas que el router
-reconocería a medias y contestaría con una lista equivocada. `intents.es_compleja`
-las detecta y las manda al modelo; sin modelo configurado, el bot dice que no
-puede y registra la pregunta. Una respuesta incorrecta con formato correcto es
-peor que ninguna.
 
 ## Pendiente
 

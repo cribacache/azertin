@@ -43,13 +43,14 @@ def obtener(mensaje, hoy):
 def guardar(mensaje, hoy, respuesta):
     """Guarda solo respuestas definitivas.
 
-    Las parciales (las que dio el respaldo porque el modelo fallo) no se
-    cachean: si no, se seguiria sirviendo la version degradada durante toda la
-    ventana, incluso despues de que el proveedor se recupere.
+    Ni "sin_datos" (el modelo dijo que no sabe: puede cambiar si se agrega el
+    dato) ni "no_disponible" (Gemini esta caido o sin creditos: si no, se
+    seguiria avisando que no responde durante toda la ventana, incluso
+    despues de que el proveedor se recupere) se cachean.
     """
     if not respuesta:
         return
     meta = respuesta.get("meta", {})
-    if meta.get("intencion") == "sin_datos" or meta.get("parcial"):
+    if meta.get("intencion") in ("sin_datos", "no_disponible"):
         return
     cache.set(clave(mensaje, hoy), respuesta, settings.RESPUESTA_CACHE_TTL)

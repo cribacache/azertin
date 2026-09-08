@@ -8,7 +8,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.test import TestCase, override_settings
 
-from chat import buk, intents
+from chat import buk
 
 # Los tests no deben depender de que archivos haya en datos/: quien no prueba
 # documentos corre contra una carpeta vacia.
@@ -84,369 +84,18 @@ def fake_get(url, **kwargs):
     return Mock(status_code=200, json=lambda: cuerpo, raise_for_status=lambda: None)
 
 
-class IntentTests(TestCase):
-    HOY = date(2026, 9, 3)
+def _mejor_seccion(mensaje, cuantas=1):
+    """La mejor seccion de documentos para una pregunta, o None.
 
-    def test_detecta_vacaciones_hoy(self):
-        plan = intents.interpretar("quien esta de vacaciones hoy?", self.HOY)
-        self.assertEqual(plan["intencion"], "ausencias")
-        self.assertEqual(plan["categoria"], "vacaciones")
-        self.assertEqual((plan["desde"], plan["hasta"]), (self.HOY, self.HOY))
-
-    def test_detecta_licencias_y_acentos(self):
-        plan = intents.interpretar("¿qué licencias médicas hay?", self.HOY)
-        self.assertEqual(plan["categoria"], "licencia")
-
-    def test_pregunta_general_no_fija_categoria(self):
-        plan = intents.interpretar("¿quién no vino a trabajar hoy?", self.HOY)
-        self.assertEqual(plan["intencion"], "ausencias")
-        self.assertIsNone(plan["categoria"])
-
-    def test_detecta_dias_administrativos(self):
-        plan = intents.interpretar("días administrativos en septiembre", self.HOY)
-        self.assertEqual(plan["categoria"], "vacaciones")
-        self.assertEqual(plan["subtipo"], "dias_administrativos")
-
-    def test_detecta_rango_de_mes(self):
-        plan = intents.interpretar("vacaciones en octubre", self.HOY)
-        self.assertEqual(plan["desde"], date(2026, 10, 1))
-        self.assertEqual(plan["hasta"], date(2026, 10, 31))
-
-    def test_detecta_semana(self):
-        plan = intents.interpretar("quien esta fuera esta semana", self.HOY)
-        self.assertEqual(plan["desde"], date(2026, 8, 31))  # lunes
-        self.assertEqual(plan["hasta"], date(2026, 9, 6))
-
-    def test_fecha_explicita(self):
-        plan = intents.interpretar("vacaciones el 2026-09-07", self.HOY)
-        self.assertEqual(plan["desde"], date(2026, 9, 7))
-
-    def test_mensaje_sin_relacion_cae_en_ayuda(self):
-        self.assertEqual(intents.interpretar("cuanto es el aguinaldo", self.HOY)["intencion"],
-                         "ayuda")
-
-    def test_reconoce_la_cortesia_sin_gastar_modelo(self):
-        for mensaje, esperado in (
-            ("hola", "saludo"),
-            ("¡Hola!", "saludo"),
-            ("buenas tardes", "saludo"),
-            ("¿cómo estás?", "saludo"),
-            ("gracias", "gracias"),
-            ("muchas gracias, perfecto", "gracias"),
-            ("chao", "despedida"),
-            ("¿quién eres?", "identidad"),
-            ("¿en qué me puedes ayudar?", "identidad"),
-        ):
-            self.assertEqual(intents.interpretar(mensaje, self.HOY)["intencion"], esperado,
-                             mensaje)
-
-    def test_la_cortesia_no_secuestra_preguntas_reales(self):
-        """"ayuda" y "gracias" aparecen dentro de consultas de verdad."""
-        for mensaje in ("ayudame con las vacaciones de octubre",
-                        "hola, ¿quién está fuera hoy?",
-                        "gracias, ¿y quién está de vacaciones mañana?"):
-            self.assertEqual(intents.interpretar(mensaje, self.HOY)["intencion"], "ausencias",
-                             mensaje)
-
-
-@SIN_DOCUMENTOS
-class ChatViewTests(TestCase):
-    def setUp(self):
-        cache.clear()
-
-    def _preguntar(self, mensaje):
-        import json as _json
-        return self.client.post("/api/chat/", data=_json.dumps({"message": mensaje}),
-                                content_type="application/json").json()
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_incluye_vacacion_ya_empezada(self, mocked):
-        """El caso que fallaba: una vacacion en curso que empezo antes de hoy."""
-        cuerpo = self._preguntar("quien esta de vacaciones hoy")
-        nombres = [i["nombre"] for i in cuerpo["items"]]
-        self.assertIn('Ana "Mane" Rojas', nombres)     # 24-ago -> 4-sep, en curso
-        self.assertIn('Luis "Lucho" Soto', nombres)     # dia administrativo de hoy
-        self.assertEqual(len(cuerpo["items"]), 2)  # la de diciembre queda fuera
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_vacaciones_no_salen_de_absences(self, mocked):
-        """Las vacaciones vienen de /vacations, no del paid_leave de /absences."""
-        self._preguntar("quien esta de vacaciones hoy")
-        urls = [c.args[0] for c in mocked.call_args_list]
-        self.assertTrue(any("/vacations" in u for u in urls))
-        self.assertFalse(any("/absences" in u for u in urls))
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_fuera_combina_ambas_fuentes(self, mocked):
-        cuerpo = self._preguntar("quien esta fuera hoy")
-        tipos = {i["tipo"] for i in cuerpo["items"]}
-        self.assertEqual(tipos, {"vacaciones", "licencia médica"})
-        self.assertEqual(len(cuerpo["items"]), 3)  # una fila por persona y tipo
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_subtipo_administrativo(self, mocked):
-        cuerpo = self._preguntar("dias administrativos hoy")
-        self.assertEqual(len(cuerpo["items"]), 1)
-        self.assertEqual(cuerpo["items"][0]["nombre"], 'Luis "Lucho" Soto')
-        self.assertTrue(cuerpo["items"][0]["media_jornada"])
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_vacaciones_piden_margen_hacia_atras(self, mocked):
-        self._preguntar("vacaciones hoy")
-        llamada = next(c for c in mocked.call_args_list if "/vacations" in c.args[0])
-        self.assertLess(llamada.kwargs["params"]["date"], HOY.isoformat())  # pide desde antes
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_no_expone_datos_sensibles(self, mocked):
-        response = self.client.post(
-            "/api/chat/", data='{"message":"quien esta fuera hoy"}',
-            content_type="application/json",
-        )
-        crudo = response.content.decode()
-        for sensible in ("11.111.111-1", "22.222.222-2", "luis@azerta.cl", "rut"):
-            self.assertNotIn(sensible, crudo)
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_directorio_se_cachea_entre_mensajes(self, mocked):
-        for _ in range(3):
-            self.client.post("/api/chat/", data='{"message":"quien esta fuera hoy"}',
-                             content_type="application/json")
-        urls = [c.args[0] for c in mocked.call_args_list]
-        self.assertEqual(sum("/employees/active" in u for u in urls), 1)
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_status_reporta_nomina(self, mocked):
-        response = self.client.get("/api/status/")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["personas_activas"], 2)
-
-
-@SIN_DOCUMENTOS
-class ConfidencialidadTests(TestCase):
-    def setUp(self):
-        cache.clear()
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_no_expone_el_motivo_de_la_licencia(self, mocked):
-        """licence_type es informacion de salud y no debe salir nunca."""
-        response = self.client.post(
-            "/api/chat/", data='{"message":"licencias hoy"}',
-            content_type="application/json",
-        )
-        crudo = response.content.decode()
-        for reservado in ("accidente_comun", "accidente comun", "pre_natal",
-                          "post natal", "parental", "licence_type"):
-            self.assertNotIn(reservado, crudo)
-        self.assertEqual(response.json()["items"][0]["detalle"], "")
-
-
-@SIN_DOCUMENTOS
-class PersonaTests(TestCase):
-    def setUp(self):
-        cache.clear()
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_pregunta_por_una_persona_responde_en_texto(self, mocked):
-        cuerpo = self.client.post(
-            "/api/chat/", data='{"message":"esta Ana de vacaciones hoy?"}',
-            content_type="application/json",
-        ).json()
-        self.assertEqual(cuerpo["meta"]["intencion"], "persona")
-        self.assertIn("Ana", cuerpo["answer"])
-        self.assertNotIn("Luis Soto", cuerpo["answer"])  # no lista a los demas
-        self.assertEqual(len(cuerpo["items"]), 1)
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_persona_sin_ausencias_lo_dice(self, mocked):
-        cuerpo = self.client.post(
-            "/api/chat/", data='{"message":"esta Ana Rojas de vacaciones el 2026-11-11?"}',
-            content_type="application/json",
-        ).json()
-        self.assertIn("no registra ausencias", cuerpo["answer"])
-        self.assertIn("Ana", cuerpo["answer"])
-
-
-@SIN_DOCUMENTOS
-class SinDatosTests(TestCase):
-    def setUp(self):
-        cache.clear()
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_avisa_y_registra_la_consulta(self, mock_buk):
-        from chat.models import ConsultaNoResuelta
-        cuerpo = self.client.post(
-            "/api/chat/", data='{"message":"cuanto es el bono de fin de anio?"}',
-            content_type="application/json",
-        ).json()
-        self.assertIn("Todavía no tengo esa información", cuerpo["answer"])
-        self.assertTrue(cuerpo["meta"]["registrada"])
-        self.assertEqual(ConsultaNoResuelta.objects.count(), 1)
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_repetir_la_pregunta_agrupa_en_una_fila(self, mock_buk):
-        from chat.models import ConsultaNoResuelta
-        for texto in ('{"message":"cuanto es el aguinaldo?"}',
-                      '{"message":"Cuanto es el AGUINALDO?"}'):
-            self.client.post("/api/chat/", data=texto, content_type="application/json")
-        self.assertEqual(ConsultaNoResuelta.objects.count(), 1)
-        self.assertEqual(ConsultaNoResuelta.objects.first().veces, 2)
-
-
-class DocumentosTests(TestCase):
-    def setUp(self):
-        cache.clear()
-
-    def _con_documento(self, texto, nombre="politica.md"):
-        import tempfile
-        from django.test import override_settings
-        carpeta = tempfile.mkdtemp()
-        (Path(carpeta) / nombre).write_text(texto, encoding="utf-8")
-        return override_settings(DOCUMENTOS_DIR=carpeta)
-
-    def test_responde_desde_el_documento(self):
-        doc = "# Politica\n\n## Como pedir vacaciones\n\nCon quince dias de anticipacion.\n"
-        with self._con_documento(doc):
-            cuerpo = self.client.post(
-                "/api/chat/", data='{"message":"como pido vacaciones?"}',
-                content_type="application/json",
-            ).json()
-        self.assertEqual(cuerpo["meta"]["intencion"], "documento")
-        self.assertIn("quince dias", cuerpo["answer"])
-
-    def test_procedimiento_no_se_confunde_con_personas(self):
-        """'como pido vacaciones' no debe listar a quien esta de vacaciones."""
-        self.assertTrue(intents.es_procedimiento("¿cómo pido vacaciones?"))
-        self.assertFalse(intents.es_procedimiento("¿quién está de vacaciones hoy?"))
-
-
-class RegistroSelectivoTests(TestCase):
-    def setUp(self):
-        cache.clear()
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_no_registra_una_respuesta_negativa_correcta(self, mocked):
-        """'X no tiene ausencias' se responde bien; no es una consulta pendiente."""
-        from chat.models import ConsultaNoResuelta
-        self.client.post(
-            "/api/chat/", data='{"message":"esta Ana Rojas de vacaciones el 2026-11-11?"}',
-            content_type="application/json",
-        )
-        self.assertEqual(ConsultaNoResuelta.objects.count(), 0)
-
-
-@SIN_DOCUMENTOS
-class AsistenteTests(TestCase):
-    def setUp(self):
-        cache.clear()
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_la_herramienta_no_entrega_el_motivo_de_la_licencia(self, mock_buk):
-        from chat import herramientas
-        datos = herramientas.listar_ausencias(_f(0), _f(0))
-        crudo = json.dumps(datos, ensure_ascii=False)
-        for reservado in ("accidente_comun", "accidente comun", "licence_type", "post natal"):
-            self.assertNotIn(reservado, crudo)
-
-
-@SIN_DOCUMENTOS
-class CacheRespuestasTests(TestCase):
-    def setUp(self):
-        cache.clear()
-
-    def _preguntar(self, texto):
-        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
-                                content_type="application/json").json()
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_la_segunda_vez_no_consulta_buk(self, mocked):
-        self._preguntar("quien esta fuera hoy")
-        llamadas_primera = len(mocked.call_args_list)
-        cuerpo = self._preguntar("quien esta fuera hoy")
-        self.assertTrue(cuerpo["meta"]["desde_cache"])
-        self.assertEqual(cuerpo["meta"]["requests_buk"], 0)
-        self.assertEqual(len(mocked.call_args_list), llamadas_primera)  # sin red nueva
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_ignora_acentos_mayusculas_y_puntuacion(self, mocked):
-        primera = self._preguntar("quien esta fuera hoy")
-        self.assertFalse(primera["meta"]["desde_cache"])
-        for variante in ("¿Quién está fuera hoy?", "QUIEN ESTA FUERA HOY!!",
-                         "  quien   esta  fuera  hoy  "):
-            self.assertTrue(self._preguntar(variante)["meta"]["desde_cache"], variante)
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_no_cachea_entre_dias_distintos(self, mocked):
-        """La respuesta a "hoy" no puede servirse manana."""
-        from chat import respuestas
-        hoy, manana = date(2026, 9, 3), date(2026, 9, 4)
-        self.assertNotEqual(respuestas.clave("quien esta fuera hoy", hoy),
-                            respuestas.clave("quien esta fuera hoy", manana))
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_no_cachea_las_respuestas_sin_datos(self, mocked):
-        self._preguntar("cuanto es el aguinaldo?")
-        cuerpo = self._preguntar("cuanto es el aguinaldo?")
-        self.assertFalse(cuerpo["meta"]["desde_cache"])
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_registra_las_preguntas_con_su_frecuencia(self, mocked):
-        from chat.models import Pregunta
-        for _ in range(3):
-            self._preguntar("quien esta fuera hoy")
-        fila = Pregunta.objects.get(mensaje_normalizado__contains="fuera hoy")
-        self.assertEqual(fila.veces, 3)
-        self.assertEqual(fila.veces_cache, 2)  # la primera no vino de cache
-
-    @override_settings(GEMINI_API_KEY="AIza-prueba",
-                       ASISTENTE_SIEMPRE=True, ASISTENTE_ANONIMIZAR=False)
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_gemini")
-    def test_modo_siempre_manda_todo_al_modelo(self, mock_cliente, mock_buk):
-        generar = mock_cliente.return_value.models.generate_content
-        generar.return_value = _respuesta_gemini(texto="Hoy hay 3 personas fuera.")
-        cuerpo = self._preguntar("quien esta fuera hoy")
-        self.assertEqual(cuerpo["meta"]["intencion"], "modelo")
-
-
-@SIN_DOCUMENTOS
-class ComplejidadTests(TestCase):
-    """Las reglas deben ceder en vez de contestar a medias."""
-
-    def setUp(self):
-        cache.clear()
-
-    def test_reconoce_lo_que_no_puede_resolver(self):
-        for pregunta in ("compara agosto contra septiembre",
-                         "¿qué área tiene más ausencias?",
-                         "ranking de areas con mas licencias",
-                         "¿por qué hay tanta gente fuera?",
-                         "¿cuántos días de vacaciones le quedan a Ana?"):
-            self.assertTrue(intents.es_compleja(pregunta), pregunta)
-
-    def test_filtrar_por_un_area_lo_resuelven_las_reglas(self):
-        """Antes iba al modelo; ahora el router sabe filtrar por área."""
-        for pregunta in ("¿cuántas personas de comunicaciones están fuera?",
-                         "¿quién está de vacaciones en asuntos públicos?",
-                         "¿quién está trabajando hoy en prensa?"):
-            self.assertFalse(intents.es_compleja(pregunta), pregunta)
-
-    def test_no_marca_las_preguntas_simples(self):
-        for pregunta in ("¿quién está fuera hoy?", "licencias esta semana",
-                         "vacaciones en octubre", "¿cuántas personas hay activas?"):
-            self.assertFalse(intents.es_compleja(pregunta), pregunta)
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_sin_modelo_lo_dice_en_vez_de_inventar(self, mocked):
-        cuerpo = self.client.post(
-            "/api/chat/", data='{"message":"compara agosto contra septiembre"}',
-            content_type="application/json",
-        ).json()
-        self.assertEqual(cuerpo["meta"]["intencion"], "sin_datos")
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_dotacion_no_secuestra_preguntas_de_ausencia(self, mocked):
-        plan = intents.interpretar("cuantas personas estan fuera hoy", date(2026, 9, 3))
-        self.assertEqual(plan["intencion"], "ausencias")
+    Equivalente a la vieja `documentos.responder`, que ya no existe: era solo
+    para el router de reglas, que llamaba a esto antes de pasarle la pregunta
+    a Gemini. La herramienta real que usa el modelo es `buscar_politica`, que
+    llama a `documentos.buscar` directamente (ver GeminiTests y
+    PoliticaVacacionesDocTests).
+    """
+    from chat import documentos
+    encontradas = documentos.buscar(mensaje, cuantas=cuantas)
+    return encontradas[0] if encontradas else None
 
 
 class _PedidoGemini:
@@ -461,8 +110,190 @@ def _respuesta_gemini(texto=None, llamadas=None, contenido=None):
 
 
 @SIN_DOCUMENTOS
-@override_settings(GEMINI_API_KEY="AIza-prueba",
-                   ASISTENTE_ANONIMIZAR=False, ASISTENTE_SIEMPRE=False)
+class HerramientasTests(TestCase):
+    """Las funciones que Gemini puede llamar (`chat/herramientas.py`): mismos
+    datos que antes usaba el router de reglas, con la misma sanitizacion."""
+
+    def setUp(self):
+        cache.clear()
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_listar_ausencias_incluye_vacacion_ya_empezada(self, mocked):
+        """El caso que fallaba: una vacacion en curso que empezo antes de hoy."""
+        from chat import herramientas
+        datos = herramientas.listar_ausencias(_f(0), _f(0))
+        nombres = [p["nombre"] for p in datos["personas"]]
+        # herramientas.listar_ausencias usa el nombre simple, sin el apodo
+        # formateado (eso lo redacta Gemini, si lo necesita, via info_persona).
+        self.assertIn("Ana Rojas", nombres)     # 24-ago -> 4-sep, en curso
+        self.assertIn("Luis Soto", nombres)     # dia administrativo de hoy
+        # Luis aparece dos veces (dia administrativo + licencia el mismo dia):
+        # un registro por tramo, no por persona. Ver nota en el README sobre
+        # "quien esta disponible".
+        self.assertEqual(datos["total"], 3)
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_listar_ausencias_no_expone_datos_sensibles(self, mocked):
+        from chat import herramientas
+        datos = herramientas.listar_ausencias(_f(-2), _f(2))
+        crudo = json.dumps(datos, ensure_ascii=False)
+        for sensible in ("11.111.111-1", "22.222.222-2", "luis@azerta.cl", "rut",
+                         "accidente_comun", "accidente comun", "licence_type",
+                         "post natal"):
+            self.assertNotIn(sensible, crudo)
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_ausencias_de_persona_resuelve_el_nombre(self, mocked):
+        from chat import herramientas
+        datos = herramientas.ausencias_de_persona("Ana", _f(0), _f(0))
+        self.assertTrue(datos["encontrada"])
+        self.assertEqual(datos["nombre"], "Ana Rojas")
+        self.assertEqual(len(datos["ausencias"]), 1)
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_ausencias_de_persona_nombre_desconocido(self, mocked):
+        from chat import herramientas
+        datos = herramientas.ausencias_de_persona("nadie existe de verdad")
+        self.assertFalse(datos["encontrada"])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_dotacion_cuenta_activos(self, mocked):
+        from chat import herramientas
+        self.assertEqual(herramientas.dotacion(), {"personas_activas": 2})
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_cumpleanos_no_expone_el_ano_de_nacimiento(self, mocked):
+        from chat import herramientas
+        datos = herramientas.cumpleanos(_f(0), 5)
+        crudo = json.dumps(datos, ensure_ascii=False)
+        self.assertNotIn("1979", crudo)
+        self.assertNotIn("birthday", crudo)
+        self.assertTrue(any(p["nombre"].startswith("Ana") for p in datos["personas"]))
+
+
+@SIN_DOCUMENTOS
+class NoDisponibleTests(TestCase):
+    """Sin clave, sin creditos o con Gemini caido, el chat avisa en vez de
+    responder con una version degradada: no hay reglas de respaldo detras."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _preguntar(self, texto):
+        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
+                                content_type="application/json").json()
+
+    @override_settings(GEMINI_API_KEY="")
+    def test_sin_clave_avisa_en_vez_de_inventar(self):
+        cuerpo = self._preguntar("quien esta fuera hoy?")
+        self.assertEqual(cuerpo["meta"]["intencion"], "no_disponible")
+        self.assertEqual(cuerpo["meta"]["motivo"], "sin_clave")
+        self.assertIn("No puedo responder ahora mismo", cuerpo["answer"])
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba")
+    @patch("chat.asistente._cliente_gemini")
+    def test_no_se_registra_como_consulta_pendiente(self, mock_cliente):
+        """"No disponible" no es "el modelo no sabe": no hay que revisarla
+        despues, hay que arreglar la cuota o la clave."""
+        from chat.models import ConsultaNoResuelta
+        mock_cliente.return_value.models.generate_content.side_effect = RuntimeError("503")
+        self._preguntar("quien esta fuera hoy?")
+        self.assertEqual(ConsultaNoResuelta.objects.count(), 0)
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba")
+    @patch("chat.asistente._cliente_gemini")
+    def test_avisa_el_motivo_especifico_de_la_falla(self, mock_cliente):
+        """La primera falla ya alcanza para explicar el motivo real (creditos
+        agotados), no solo un generico "no disponible": esto paso en vivo la
+        primera vez que se probo el flujo completo."""
+        mock_cliente.return_value.models.generate_content.side_effect = RuntimeError(
+            "429 RESOURCE_EXHAUSTED. Your prepayment credits are depleted.")
+        cuerpo = self._preguntar("quien esta fuera hoy?")
+        self.assertEqual(cuerpo["meta"]["motivo"], "prepago_agotado")
+        self.assertIn("prepagados", cuerpo["answer"])
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba")
+    @patch("chat.asistente._cliente_gemini")
+    def test_no_se_cachea(self, mock_cliente):
+        mock_cliente.return_value.models.generate_content.side_effect = RuntimeError("503")
+        primera = self._preguntar("quien esta fuera hoy?")
+        segunda = self._preguntar("quien esta fuera hoy?")
+        self.assertFalse(primera["meta"]["desde_cache"])
+        self.assertFalse(segunda["meta"]["desde_cache"])
+
+
+@SIN_DOCUMENTOS
+@override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_ANONIMIZAR=False)
+class CacheRespuestasTests(TestCase):
+    def setUp(self):
+        cache.clear()
+
+    def _preguntar_con_modelo(self, texto, mock_cliente):
+        generar = mock_cliente.return_value.models.generate_content
+        generar.side_effect = [
+            _respuesta_gemini(llamadas=[_PedidoGemini(
+                "listar_ausencias", {"desde": _f(0), "hasta": _f(0)})]),
+            _respuesta_gemini(texto="Hay 3 personas fuera hoy."),
+        ]
+        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
+                                content_type="application/json").json()
+
+    def _preguntar(self, texto):
+        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
+                                content_type="application/json").json()
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_la_segunda_vez_no_consulta_buk_ni_al_modelo(self, mock_cliente, mocked):
+        self._preguntar_con_modelo("quien esta fuera hoy", mock_cliente)
+        llamadas_buk = len(mocked.call_args_list)
+        llamadas_modelo = mock_cliente.return_value.models.generate_content.call_count
+        cuerpo = self._preguntar("quien esta fuera hoy")
+        self.assertTrue(cuerpo["meta"]["desde_cache"])
+        self.assertEqual(cuerpo["meta"]["requests_buk"], 0)
+        self.assertEqual(len(mocked.call_args_list), llamadas_buk)          # sin red nueva
+        self.assertEqual(mock_cliente.return_value.models.generate_content.call_count,
+                         llamadas_modelo)                                  # sin tokens nuevos
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_ignora_acentos_mayusculas_y_puntuacion(self, mock_cliente, mocked):
+        primera = self._preguntar_con_modelo("quien esta fuera hoy", mock_cliente)
+        self.assertFalse(primera["meta"]["desde_cache"])
+        for variante in ("¿Quién está fuera hoy?", "QUIEN ESTA FUERA HOY!!",
+                         "  quien   esta  fuera  hoy  "):
+            self.assertTrue(self._preguntar(variante)["meta"]["desde_cache"], variante)
+
+    def test_no_cachea_entre_dias_distintos(self):
+        """La respuesta a "hoy" no puede servirse manana."""
+        from chat import respuestas
+        hoy, manana = date(2026, 9, 3), date(2026, 9, 4)
+        self.assertNotEqual(respuestas.clave("quien esta fuera hoy", hoy),
+                            respuestas.clave("quien esta fuera hoy", manana))
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_no_cachea_las_respuestas_sin_datos(self, mock_cliente, mocked):
+        mock_cliente.return_value.models.generate_content.return_value = _respuesta_gemini(
+            texto="NO_SE: no tengo ese dato.")
+        self._preguntar("cuanto es el aguinaldo?")
+        cuerpo = self._preguntar("cuanto es el aguinaldo?")
+        self.assertFalse(cuerpo["meta"]["desde_cache"])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_registra_las_preguntas_con_su_frecuencia(self, mock_cliente, mocked):
+        from chat.models import Pregunta
+        self._preguntar_con_modelo("quien esta fuera hoy", mock_cliente)
+        for _ in range(2):
+            self._preguntar("quien esta fuera hoy")
+        fila = Pregunta.objects.get(mensaje_normalizado__contains="fuera hoy")
+        self.assertEqual(fila.veces, 3)
+        self.assertEqual(fila.veces_cache, 2)  # la primera no vino de cache
+
+
+@SIN_DOCUMENTOS
+@override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_ANONIMIZAR=False)
 class GeminiTests(TestCase):
     """El SDK se simula: la suite no consume cuota gratuita."""
 
@@ -513,16 +344,10 @@ class GeminiTests(TestCase):
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     @patch("chat.asistente._cliente_gemini")
-    def test_si_gemini_falla_la_app_responde_igual(self, mock_cliente, mock_buk):
+    def test_si_gemini_falla_avisa_que_no_esta_disponible(self, mock_cliente, mock_buk):
         mock_cliente.return_value.models.generate_content.side_effect = RuntimeError("429")
         cuerpo = self._preguntar("hazme un resumen de la carga del equipo")
-        self.assertEqual(cuerpo["meta"]["intencion"], "sin_datos")
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_gemini")
-    def test_las_reglas_no_consumen_cuota(self, mock_cliente, mock_buk):
-        self._preguntar("quien esta fuera hoy")
-        mock_cliente.assert_not_called()
+        self.assertEqual(cuerpo["meta"]["intencion"], "no_disponible")
 
 
 class DocumentoTextoPlanoTests(TestCase):
@@ -570,20 +395,18 @@ class DocumentoTextoPlanoTests(TestCase):
 
     def test_las_ligaduras_de_pdf_no_rompen_la_busqueda(self):
         """Un PDF exportado escribe "planiﬁcacion" con la ligadura U+FB01."""
-        from chat import documentos
         doc = ("Planiﬁcacion:\nLa planiﬁcacion de vacaciones la coordina cada "
                "director de cuenta antes de ingresar la solicitud en la plataforma.\n")
         with self._con(doc):
-            seccion = documentos.responder("como es la planificacion de vacaciones")
+            seccion = _mejor_seccion("como es la planificacion de vacaciones")
         self.assertIsNotNone(seccion)
 
     def test_la_seccion_larga_no_gana_por_volumen(self):
-        from chat import documentos
         doc = ("Generalidades:\n" + "vacaciones dias feriado solicitud equipo " * 40 + "\n"
                "Enfermedad:\nSi el colaborador se enferma durante sus vacaciones puede "
                "solicitar la reprogramacion presentando la licencia.\n")
         with self._con(doc):
-            seccion = documentos.responder("que pasa si me enfermo en vacaciones")
+            seccion = _mejor_seccion("que pasa si me enfermo en vacaciones")
         self.assertEqual(seccion["titulo"], "Enfermedad")
 
     def test_la_herramienta_entrega_varias_secciones(self):
@@ -593,37 +416,6 @@ class DocumentoTextoPlanoTests(TestCase):
         self.assertTrue(salida["encontrada"])
         self.assertGreaterEqual(len(salida["secciones"]), 1)
         self.assertIn("titulo", salida["secciones"][0])
-
-
-class RuteoProcedimientoTests(TestCase):
-    def test_las_marcas_de_ausencia_mandan_sobre_las_de_procedimiento(self):
-        # "no puedo contar" contiene "puedo", que es marca de procedimiento
-        self.assertFalse(intents.es_procedimiento("¿con quién no puedo contar esta semana?"))
-        self.assertFalse(intents.es_procedimiento("¿quién está fuera hoy?"))
-
-    def test_sigue_reconociendo_las_de_procedimiento(self):
-        self.assertTrue(intents.es_procedimiento("¿cómo pido vacaciones?"))
-        self.assertTrue(intents.es_procedimiento("¿a quién aviso por una licencia médica?"))
-        self.assertTrue(intents.es_procedimiento("¿qué son los días administrativos?"))
-
-
-@SIN_DOCUMENTOS
-class RuteoComplejoTests(TestCase):
-    def setUp(self):
-        cache.clear()
-
-    @override_settings(GEMINI_API_KEY="AIza-prueba")
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_gemini")
-    def test_una_comparacion_de_datos_va_al_modelo(self, mock_cliente, mock_buk):
-        generar = mock_cliente.return_value.models.generate_content
-        generar.side_effect = [_respuesta_gemini(texto="En agosto hubo mas.")]
-        cuerpo = self.client.post(
-            "/api/chat/",
-            data=json.dumps({"message": "compara cuanta gente estuvo fuera en agosto contra septiembre"}),
-            content_type="application/json",
-        ).json()
-        self.assertEqual(cuerpo["meta"]["intencion"], "modelo")
 
 
 class TimeoutTests(TestCase):
@@ -669,132 +461,6 @@ class GeminiFirmaTests(TestCase):
         self.assertIn(contenido, historial)
 
 
-@SIN_DOCUMENTOS
-@override_settings(GEMINI_API_KEY="AIza-prueba",
-                   ASISTENTE_ANONIMIZAR=False, ASISTENTE_SIEMPRE=False)
-class CombinacionTests(TestCase):
-    """Reglas y modelo trabajando juntos: uno cubre al otro."""
-
-    def setUp(self):
-        cache.clear()
-
-    def _preguntar(self, texto):
-        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
-                                content_type="application/json").json()
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_gemini")
-    def test_si_el_modelo_falla_responden_las_reglas(self, mock_cliente, mock_buk):
-        """Antes esto terminaba en 'no tengo esa informacion'."""
-        mock_cliente.return_value.models.generate_content.side_effect = RuntimeError("503")
-        cuerpo = self._preguntar("compara cuánta gente estuvo fuera este mes")
-        self.assertEqual(cuerpo["meta"]["intencion"], "reglas_respaldo")
-        self.assertTrue(cuerpo["meta"]["parcial"])
-        self.assertTrue(cuerpo["items"])  # trae el detalle igual
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_gemini")
-    def test_al_modelo_se_le_adelantan_los_datos(self, mock_cliente, mock_buk):
-        """Con el contexto ya resuelto, no necesita una vuelta extra."""
-        generar = mock_cliente.return_value.models.generate_content
-        generar.side_effect = [_respuesta_gemini(texto="Este mes hubo más ausencias.")]
-        cuerpo = self._preguntar("compara cuánta gente estuvo fuera este mes")
-        self.assertEqual(cuerpo["meta"]["intencion"], "modelo")
-        self.assertTrue(cuerpo["meta"]["con_contexto"])
-        self.assertEqual(generar.call_count, 1)  # una sola llamada, no dos
-        enviado = str(generar.call_args.kwargs["contents"])
-        self.assertIn("DATOS YA CONSULTADOS", enviado)
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_gemini")
-    def test_tras_varias_fallas_deja_de_llamar_al_modelo(self, mock_cliente, mock_buk):
-        """Cortacircuitos: no esperar el timeout en cada pregunta."""
-        from chat import asistente
-        mock_cliente.return_value.models.generate_content.side_effect = RuntimeError("503")
-        for i in range(settings.ASISTENTE_FALLAS_MAX):
-            self._preguntar(f"compara las ausencias, intento {i}")
-        self.assertTrue(asistente.en_pausa())
-        self.assertFalse(asistente.disponible())
-
-        llamadas = mock_cliente.call_count
-        self._preguntar("compara otra cosa distinta")
-        self.assertEqual(mock_cliente.call_count, llamadas)  # ya no lo intenta
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_gemini")
-    def test_un_exito_reactiva_el_modelo(self, mock_cliente, mock_buk):
-        from chat import asistente
-        generar = mock_cliente.return_value.models.generate_content
-        generar.side_effect = [RuntimeError("503"),
-                               _respuesta_gemini(texto="Listo.")]
-        self._preguntar("compara las ausencias de este mes")
-        self._preguntar("compara las ausencias de la semana")
-        self.assertFalse(asistente.en_pausa())
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_gemini")
-    def test_las_preguntas_simples_no_tocan_el_modelo(self, mock_cliente, mock_buk):
-        self._preguntar("quien esta fuera hoy")
-        mock_cliente.assert_not_called()
-
-    @override_settings(ASISTENTE_ANONIMIZAR=True)
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_gemini")
-    def test_el_contexto_adelantado_tambien_se_anonimiza(self, mock_cliente, mock_buk):
-        generar = mock_cliente.return_value.models.generate_content
-        generar.side_effect = [_respuesta_gemini(texto="Persona 1 está fuera.")]
-        cuerpo = self._preguntar("compara cuánta gente estuvo fuera este mes")
-        enviado = str(generar.call_args.kwargs["contents"])
-        self.assertNotIn("Ana Rojas", enviado)
-        self.assertIn("Ana", cuerpo["answer"])
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_gemini")
-    def test_la_respuesta_de_respaldo_no_se_cachea(self, mock_cliente, mock_buk):
-        """Si se cacheara, seguiria dando la version degradada tras recuperarse."""
-        generar = mock_cliente.return_value.models.generate_content
-        generar.side_effect = [RuntimeError("504"),
-                               _respuesta_gemini(texto="Ahora sí: hubo 3 personas fuera.")]
-        primera = self._preguntar("compara cuánta gente estuvo fuera este mes")
-        self.assertEqual(primera["meta"]["intencion"], "reglas_respaldo")
-
-        segunda = self._preguntar("compara cuánta gente estuvo fuera este mes")
-        self.assertFalse(segunda["meta"].get("desde_cache"))
-        self.assertEqual(segunda["meta"]["intencion"], "modelo")
-
-
-@SIN_DOCUMENTOS
-class CortesiaTests(TestCase):
-    def setUp(self):
-        cache.clear()
-
-    def _preguntar(self, texto):
-        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
-                                content_type="application/json").json()
-
-    @override_settings(GEMINI_API_KEY="AIza-prueba",
-                       ASISTENTE_SIEMPRE=False)
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    @patch("chat.asistente._cliente_gemini")
-    def test_un_saludo_no_gasta_modelo_ni_buk(self, mock_cliente, mock_buk):
-        cuerpo = self._preguntar("Hola")
-        self.assertEqual(cuerpo["meta"]["intencion"], "cortesia")
-        self.assertEqual(cuerpo["meta"]["requests_buk"], 0)
-        mock_cliente.assert_not_called()
-        mock_buk.assert_not_called()
-
-    def test_devuelve_el_mismo_saludo(self):
-        self.assertTrue(self._preguntar("buenas tardes")["answer"].startswith("Buenas tardes"))
-        self.assertTrue(self._preguntar("buenos días")["answer"].startswith("Buenos días"))
-        self.assertTrue(self._preguntar("hola")["answer"].startswith("Hola"))
-
-    def test_no_se_registra_como_consulta_sin_responder(self):
-        from chat.models import ConsultaNoResuelta
-        for m in ("hola", "gracias", "chao", "¿quién eres?"):
-            self._preguntar(m)
-        self.assertEqual(ConsultaNoResuelta.objects.count(), 0)
-
-
 class PdfTests(TestCase):
     def setUp(self):
         cache.clear()
@@ -820,13 +486,12 @@ class PdfTests(TestCase):
         self.assertIn("julio de 2025", texto)
 
     def test_un_pdf_entra_al_indice_de_documentos(self):
-        from chat import documentos
         carpeta, _ = self._pdf([
             "Dias administrativos:\nCada colaborador tiene un dia administrativo "
             "por semestre y no se acumula al siguiente."
         ])
         with override_settings(DOCUMENTOS_DIR=carpeta):
-            seccion = documentos.responder("dia administrativo por semestre")
+            seccion = _mejor_seccion("dia administrativo por semestre")
         self.assertIsNotNone(seccion)
         self.assertIn("semestre", seccion["cuerpo"])
 
@@ -887,22 +552,24 @@ class EmbeddingsTests(TestCase):
     @patch("chat.embeddings._pedir", return_value=None)
     def test_si_la_api_falla_la_busqueda_lexica_sigue(self, mock_pedir):
         """El requisito duro: los embeddings nunca pueden tumbar una respuesta."""
-        from chat import documentos
         carpeta = tempfile.mkdtemp()
         (Path(carpeta) / "politica.txt").write_text(
             "Dias administrativos:\nCada colaborador tiene derecho a un dia "
             "administrativo por semestre, que no se acumula.\n", encoding="utf-8")
         with override_settings(DOCUMENTOS_DIR=carpeta):
-            seccion = documentos.responder("dias administrativos por semestre")
+            seccion = _mejor_seccion("dias administrativos por semestre")
         self.assertIsNotNone(seccion)
 
 
+@SIN_DOCUMENTOS
 class ReevaluarTests(TestCase):
     def setUp(self):
         cache.clear()
 
+    @override_settings(GEMINI_API_KEY="AIza-prueba")
     @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_cierra_las_consultas_que_los_documentos_ya_responden(self, mocked):
+    @patch("chat.asistente._cliente_gemini")
+    def test_cierra_las_consultas_que_los_documentos_ya_responden(self, mock_cliente, mocked):
         from io import StringIO
         from django.core.management import call_command
         from chat.models import ConsultaNoResuelta, registrar
@@ -915,6 +582,25 @@ class ReevaluarTests(TestCase):
             "Dias administrativos:\nCada colaborador tiene derecho a un dia "
             "administrativo por semestre, que no se acumula al siguiente.\n",
             encoding="utf-8")
+
+        # El orden en que "reevaluar" procesa las pendientes no esta
+        # garantizado (depende de la marca de tiempo de cada una), asi que la
+        # respuesta se decide mirando el contenido de la pregunta, no la
+        # posicion en una lista fija.
+        vueltas = {"administrativo": 0}
+
+        def responder_segun_pregunta(*args, **kwargs):
+            contents = kwargs.get("contents", [])
+            texto = " ".join(str(c) for c in contents).lower()
+            if "administrativo" in texto:
+                vueltas["administrativo"] += 1
+                if vueltas["administrativo"] == 1:
+                    return _respuesta_gemini(llamadas=[_PedidoGemini(
+                        "buscar_politica", {"consulta": "dias administrativos por semestre"})])
+                return _respuesta_gemini(texto="Un dia administrativo por semestre.")
+            return _respuesta_gemini(texto="NO_SE: no tengo ese dato.")
+
+        mock_cliente.return_value.models.generate_content.side_effect = responder_segun_pregunta
 
         salida = StringIO()
         with override_settings(DOCUMENTOS_DIR=carpeta):
@@ -963,15 +649,14 @@ class SubdivisionTests(TestCase):
 
     def test_no_responde_cuando_no_hay_coincidencia_real(self):
         """Citar la política equivocada es peor que decir que no se sabe."""
-        from chat import documentos
         carpeta = tempfile.mkdtemp()
         (Path(carpeta) / "politica.txt").write_text(
             "Dias administrativos:\nCada colaborador tiene derecho a un dia "
             "administrativo por semestre, que no se acumula al siguiente.\n",
             encoding="utf-8")
         with override_settings(DOCUMENTOS_DIR=carpeta):
-            self.assertIsNone(documentos.responder("¿quién ganó el partido de ayer?"))
-            self.assertIsNone(documentos.responder("cuál es el anexo de recepción"))
+            self.assertIsNone(_mejor_seccion("¿quién ganó el partido de ayer?"))
+            self.assertIsNone(_mejor_seccion("cuál es el anexo de recepción"))
 
 
 @SIN_DOCUMENTOS
@@ -981,10 +666,6 @@ class CumpleanosTests(TestCase):
     def setUp(self):
         cache.clear()
 
-    def _preguntar(self, texto):
-        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
-                                content_type="application/json").json()
-
     @patch("chat.buk.requests.get", side_effect=fake_get)
     def test_no_expone_el_ano_de_nacimiento(self, mocked):
         from chat import buk
@@ -993,15 +674,6 @@ class CumpleanosTests(TestCase):
         self.assertNotIn("1979", crudo)          # el año del fixture
         self.assertNotIn("birthday", crudo)
         self.assertEqual(len(list(personas.values())[0]["cumple"]), 5)  # solo MM-DD
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_avisa_el_proximo_cuando_no_hay_ninguno_hoy(self, mocked):
-        """Responder solo "nadie" no sirve: lo útil es a quién saludar pronto."""
-        cuerpo = self._preguntar("¿quién está de cumpleaños hoy?")
-        self.assertEqual(cuerpo["meta"]["intencion"], "cumpleanos")
-        self.assertTrue(cuerpo["meta"].get("proximos"))
-        self.assertIn("Nadie cumple años hoy", cuerpo["answer"])
-        self.assertIn("Ana", cuerpo["answer"])   # cumple en 3 días
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     def test_cuenta_los_dias_desde_hoy_y_no_desde_el_rango(self, mocked):
@@ -1020,20 +692,6 @@ class CumpleanosTests(TestCase):
             list(personas.values())[0]["cumple"] = "02-29"
             gente, _ = buk.cumpleanos(date(2027, 2, 1), 28, hoy=date(2027, 2, 1))
         self.assertTrue(all(p["fecha"] != "2027-02-29" for p in gente))
-
-
-@SIN_DOCUMENTOS
-class TrabajandoTests(TestCase):
-    def setUp(self):
-        cache.clear()
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_responde_quien_si_esta(self, mocked):
-        cuerpo = self.client.post(
-            "/api/chat/", data=json.dumps({"message": "¿quién está trabajando hoy?"}),
-            content_type="application/json").json()
-        self.assertEqual(cuerpo["meta"]["intencion"], "trabajando")
-        self.assertEqual(cuerpo["meta"]["presentes"] + cuerpo["meta"]["ausentes"], 2)
 
 
 class UmbralDocumentosTests(TestCase):
@@ -1062,30 +720,6 @@ class UmbralDocumentosTests(TestCase):
         from chat import documentos
         with override_settings(DOCUMENTOS_DIR=self._carpeta(5), EMBEDDINGS_ACTIVOS=False):
             self.assertTrue(documentos.buscar("contenido del tema numero 3"))
-
-
-@SIN_DOCUMENTOS
-class GrupoDesconocidoTests(TestCase):
-    """BUK no guarda a qué cliente está asignada cada persona."""
-
-    def setUp(self):
-        cache.clear()
-
-    def _preguntar(self, texto):
-        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
-                                content_type="application/json").json()
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_avisa_en_vez_de_responder_por_toda_la_empresa(self, mocked):
-        cuerpo = self._preguntar("¿quién está trabajando hoy en el equipo de Santander?")
-        self.assertEqual(cuerpo["meta"]["intencion"], "grupo_desconocido")
-        self.assertIn("Santander", cuerpo["answer"])
-        self.assertIn("Comunicaciones", cuerpo["answer"])   # ofrece lo que sí tiene
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_un_area_real_si_se_responde(self, mocked):
-        cuerpo = self._preguntar("¿quién está trabajando hoy en el área de prensa?")
-        self.assertEqual(cuerpo["meta"]["intencion"], "trabajando")
 
 
 class ApodoTests(TestCase):
@@ -1138,7 +772,7 @@ class CuentasTests(TestCase):
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Detalle Cuenta-Persona"
-        ws.append(["Detalle Unipersonal"]); ws.append([]); 
+        ws.append(["Detalle Unipersonal"]); ws.append([]);
         ws.append(["Cuenta / Cliente", "Persona", "Hrs. X Semana", "Rut", "Apodo"])
         for f in filas:
             ws.append(f)
@@ -1175,79 +809,6 @@ class CuentasTests(TestCase):
         self.assertNotIn("_rut", crudo)
         self.assertNotIn("11.111.111-1", crudo)
         self.assertNotIn("111111111", crudo)
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_un_apodo_repetido_pregunta_cual(self, mocked):
-        """Hay dos "Javi" en la nómina real: elegir una al azar sería peor."""
-        from chat import buk as mod
-        directorio, _ = mod.directorio()
-        for persona in directorio.values():
-            persona["apodo"] = "Javi"
-            persona["nombre_completo"] = mod.nombre_con_apodo(persona["nombre"], "Javi")
-        with patch("chat.buk.directorio", return_value=(directorio, 0)):
-            cuerpo = self.client.post(
-                "/api/chat/", data=json.dumps({"message": "¿está la Javi hoy?"}),
-                content_type="application/json").json()
-        self.assertEqual(cuerpo["meta"]["intencion"], "persona_ambigua")
-        self.assertIn("¿Por cuál preguntas?", cuerpo["answer"])
-
-
-@SIN_DOCUMENTOS
-class DesambiguacionTests(TestCase):
-    """El bot pregunta cuál y la respuesta resuelve la pregunta original."""
-
-    def setUp(self):
-        cache.clear()
-
-    def _decir(self, cliente, texto):
-        return cliente.post("/api/chat/", data=json.dumps({"message": texto}),
-                            content_type="application/json").json()
-
-    def _dos_iguales(self):
-        directorio, _ = buk.directorio()
-        for persona in directorio.values():
-            persona["apodo"] = "Javi"
-            persona["nombre_completo"] = buk.nombre_con_apodo(persona["nombre"], "Javi")
-        return directorio
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_responder_con_apellido_resuelve_la_pregunta_original(self, mocked):
-        cliente = self.client
-        with patch("chat.buk.directorio", return_value=(self._dos_iguales(), 0)):
-            primera = self._decir(cliente, "¿está la Javi hoy?")
-            self.assertEqual(primera["meta"]["intencion"], "persona_ambigua")
-            segunda = self._decir(cliente, "Soto")
-        self.assertEqual(segunda["meta"]["intencion"], "persona")
-        self.assertTrue(segunda["meta"]["desambiguado"])
-        self.assertIn("Soto", segunda["answer"])
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_responder_con_numero(self, mocked):
-        cliente = self.client
-        with patch("chat.buk.directorio", return_value=(self._dos_iguales(), 0)):
-            self._decir(cliente, "¿está la Javi hoy?")
-            segunda = self._decir(cliente, "la 1")
-        self.assertEqual(segunda["meta"]["intencion"], "persona")
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_una_respuesta_que_no_aclara_no_adivina(self, mocked):
-        """Adivinar entre cuatro personas es peor que volver a preguntar."""
-        cliente = self.client
-        with patch("chat.buk.directorio", return_value=(self._dos_iguales(), 0)):
-            self._decir(cliente, "¿está la Javi hoy?")
-            segunda = self._decir(cliente, "¿y quién está de vacaciones?")
-        self.assertNotEqual(segunda["meta"].get("intencion"), "persona")
-        self.assertFalse(segunda["meta"].get("desambiguado"))
-
-    def test_elegir_opcion_entiende_numero_ordinal_y_apellido(self):
-        from chat.views import elegir_opcion
-        opciones = ["Javiera Ignacia González Lira", "Javiera Ignacia Moreno Soza"]
-        self.assertEqual(elegir_opcion("2", opciones), 1)
-        self.assertEqual(elegir_opcion("la segunda", opciones), 1)
-        self.assertEqual(elegir_opcion("Moreno", opciones), 1)
-        self.assertEqual(elegir_opcion("González", opciones), 0)
-        self.assertIsNone(elegir_opcion("no sé", opciones))
-        self.assertIsNone(elegir_opcion("Javiera", opciones))   # las dos coinciden
 
 
 class CuentaPorTokenTests(TestCase):
@@ -1286,237 +847,6 @@ class CuentaPorTokenTests(TestCase):
             self.assertIsNone(cuentas.buscar("el equipo del banco"))
 
 
-@SIN_DOCUMENTOS
-class DisponiblesTests(TestCase):
-    """"Disponible" es lo contrario de ausente; antes se leía al revés."""
-
-    def setUp(self):
-        cache.clear()
-
-    def _preguntar(self, texto):
-        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
-                                content_type="application/json").json()
-
-    def test_disponible_no_es_una_palabra_de_ausencia(self):
-        for pregunta in ("que ejecutivos estan disponibles hoy",
-                         "¿quién está disponible hoy?",
-                         "quienes estan disponibles en cencosud"):
-            self.assertEqual(intents.interpretar(pregunta, HOY)["intencion"],
-                             "trabajando", pregunta)
-
-    def test_ausente_sigue_siendo_ausencia(self):
-        for pregunta in ("¿quién está fuera hoy?", "¿quién está ausente?"):
-            self.assertEqual(intents.interpretar(pregunta, HOY)["intencion"],
-                             "ausencias", pregunta)
-
-    def test_detecta_la_familia_de_cargo_en_singular_y_plural(self):
-        familias = {"Ejecutivos", "Directores", "Consultores Senior"}
-        self.assertEqual(intents.detectar_familia("que ejecutivos hay", familias),
-                         "Ejecutivos")
-        self.assertEqual(intents.detectar_familia("los director de area", familias),
-                         "Directores")
-        self.assertIsNone(intents.detectar_familia("quien esta fuera", familias))
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_lista_los_nombres_cuando_el_grupo_es_acotado(self, mocked):
-        """Preguntar "qué ejecutivos" y recibir solo un número no responde."""
-        cuerpo = self._preguntar("¿qué analistas están disponibles hoy?")
-        self.assertEqual(cuerpo["meta"]["intencion"], "trabajando")
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_cuenta_personas_y_no_registros(self, mocked):
-        """Quien parte sus vacaciones en tramos es una persona, no tres."""
-        cuerpo = self._preguntar("¿quién está fuera este mes?")
-        claves = [(i["id"], i["tipo"]) for i in cuerpo["items"]]
-        self.assertEqual(len(claves), len(set(claves)))  # sin filas repetidas
-        self.assertIn(str(len({i["id"] for i in cuerpo["items"]})), cuerpo["answer"])
-
-
-@SIN_DOCUMENTOS
-class NombrePrioritarioTests(TestCase):
-    """Un nombre es más específico que el verbo de la pregunta."""
-
-    def setUp(self):
-        cache.clear()
-
-    def _preguntar(self, texto, cliente=None):
-        return (cliente or self.client).post(
-            "/api/chat/", data=json.dumps({"message": texto}),
-            content_type="application/json").json()
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_el_nombre_manda_sobre_la_intencion_de_grupo(self, mocked):
-        """"¿Ana está disponible?" pregunta por Ana, no por la nómina."""
-        cuerpo = self._preguntar("¿Ana Rojas está disponible?")
-        self.assertEqual(cuerpo["meta"]["intencion"], "persona")
-        self.assertIn("Ana", cuerpo["answer"])
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_sin_nombre_sigue_respondiendo_por_el_grupo(self, mocked):
-        cuerpo = self._preguntar("¿quién está disponible hoy?")
-        self.assertEqual(cuerpo["meta"]["intencion"], "trabajando")
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_un_saludo_no_consulta_el_directorio(self, mocked):
-        """La cortesía va antes de buscar personas."""
-        cuerpo = self._preguntar("hola")
-        self.assertEqual(cuerpo["meta"]["intencion"], "cortesia")
-        mocked.assert_not_called()
-
-
-@SIN_DOCUMENTOS
-class QuisoDecirTests(TestCase):
-    """Apellido mal escrito: sugerir en vez de listar a todos los homónimos."""
-
-    def setUp(self):
-        cache.clear()
-
-    def _preguntar(self, texto, cliente=None):
-        return (cliente or self.client).post(
-            "/api/chat/", data=json.dumps({"message": texto}),
-            content_type="application/json").json()
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_sugiere_el_nombre_parecido(self, mocked):
-        # "Rojs" sola no coincide con nadie, pero se parece a "Rojas"
-        cuerpo = self._preguntar("¿Rojs está disponible?")
-        self.assertEqual(cuerpo["meta"]["intencion"], "quiso_decir")
-        self.assertIn("¿Querrás decir", cuerpo["answer"])
-        self.assertIn("Ana", cuerpo["answer"])
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_confirmar_con_si_responde_la_pregunta_original(self, mocked):
-        cliente = self.client
-        self._preguntar("¿Rojs está disponible?", cliente)
-        segunda = self._preguntar("sí", cliente)
-        self.assertEqual(segunda["meta"]["intencion"], "persona")
-        self.assertTrue(segunda["meta"]["desambiguado"])
-
-    def test_no_sugiere_por_cualquier_palabra(self):
-        """"pinilla" no debe sugerir "Padilla" solo porque comparten letras."""
-        from chat import personas as mod
-        directorio = {1: {"id": 1, "nombre": "Reimar Padilla Castellano", "apodo": ""}}
-        self.assertEqual(mod.sugerir("felipe pinilla esta disponible", directorio), [])
-        self.assertEqual(mod.sugerir("reimar padila esta disponible", directorio), [1])
-
-    def test_si_confirma_solo_cuando_hay_una_opcion(self):
-        from chat.views import elegir_opcion
-        self.assertEqual(elegir_opcion("sí", ["Ana Rojas"]), 0)
-        self.assertIsNone(elegir_opcion("sí", ["Ana Rojas", "Ana Soto"]))
-
-    def test_el_vocabulario_de_preguntas_no_sugiere_nombres(self):
-        """"años" se parece a "Llanos": sin esto, "¿quién cumple años?"
-        terminaba respondiendo por una persona."""
-        from chat import personas as mod
-        directorio = {1: {"id": 1, "nombre": "Bastian Nicolas Llanos Guijuelos",
-                          "apodo": "Bastián"}}
-        self.assertEqual(mod.sugerir("quien cumple anos este mes", directorio), [])
-        self.assertEqual(mod.sugerir("bastian llanoz esta hoy", directorio), [1])
-
-
-@SIN_DOCUMENTOS
-class PertenenciaTests(TestCase):
-    """Quién compone un equipo es otra pregunta que quién está disponible."""
-
-    def setUp(self):
-        cache.clear()
-
-    def _planilla(self):
-        import openpyxl
-        carpeta = tempfile.mkdtemp()
-        wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Detalle Cuenta-Persona"
-        ws.append(["Detalle"]); ws.append([])
-        ws.append(["Cuenta / Cliente", "Persona", "Hrs", "Rut", "Apodo"])
-        ws.append(["CENCOSUD", "Rojas Ana", None, "11.111.111-1", "Mane"])
-        ws.append(["BANCO SANTANDER", "Soto Luis", None, "22.222.222-2", "Lucho"])
-        wb.save(Path(carpeta) / "cuentas.xlsx")
-        return carpeta
-
-    def _preguntar(self, texto, cliente=None):
-        return (cliente or self.client).post(
-            "/api/chat/", data=json.dumps({"message": texto}),
-            content_type="application/json").json()
-
-    def test_se_distingue_de_la_disponibilidad(self):
-        self.assertEqual(
-            intents.interpretar("quienes estan en el equipo de Cencosud", HOY)["intencion"],
-            "pertenencia")
-        self.assertEqual(
-            intents.interpretar("quien esta trabajando hoy en Cencosud", HOY)["intencion"],
-            "trabajando")
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_lista_a_los_integrantes(self, mocked):
-        with override_settings(DOCUMENTOS_DIR=self._planilla()):
-            cuerpo = self._preguntar("¿quiénes están en el equipo de CENCOSUD?")
-        self.assertEqual(cuerpo["meta"]["intencion"], "pertenencia")
-        self.assertEqual(len(cuerpo["items"]), 1)
-        self.assertIn("Ana", cuerpo["items"][0]["nombre"])
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_por_una_persona_responde_si_o_no(self, mocked):
-        """"¿X está en el equipo de Y?" no pregunta si está hoy."""
-        with override_settings(DOCUMENTOS_DIR=self._planilla()):
-            si = self._preguntar("¿Ana está en el equipo de CENCOSUD?")
-            no = self._preguntar("¿Ana está en el equipo de BANCO SANTANDER?")
-        self.assertTrue(si["answer"].startswith("Sí,"))
-        self.assertTrue(no["answer"].startswith("No,"))
-        self.assertIn("CENCOSUD", no["answer"])   # dice dónde sí está
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_una_pregunta_corta_hereda_el_equipo_anterior(self, mocked):
-        cliente = self.client
-        with override_settings(DOCUMENTOS_DIR=self._planilla()):
-            self._preguntar("¿quiénes están en el equipo de CENCOSUD?", cliente)
-            segunda = self._preguntar("están disponibles", cliente)
-        self.assertEqual(segunda["meta"]["grupo_heredado"], "CENCOSUD")
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_no_hereda_si_la_pregunta_nombra_otro_equipo(self, mocked):
-        cliente = self.client
-        with override_settings(DOCUMENTOS_DIR=self._planilla()):
-            self._preguntar("¿quiénes están en el equipo de CENCOSUD?", cliente)
-            segunda = self._preguntar("¿quién está disponible en BANCO SANTANDER?", cliente)
-        self.assertIsNone(segunda["meta"].get("grupo_heredado"))
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_una_pregunta_completa_no_hereda(self, mocked):
-        """El bug: la conversación se quedaba pegada a un cliente."""
-        cliente = self.client
-        with override_settings(DOCUMENTOS_DIR=self._planilla()):
-            self._preguntar("¿quién está de vacaciones en CENCOSUD?", cliente)
-            segunda = self._preguntar("necesito saber quien esta de vacaciones", cliente)
-        self.assertIsNone(segunda["meta"].get("grupo_heredado"))
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_en_general_sale_del_equipo_y_lo_olvida(self, mocked):
-        cliente = self.client
-        with override_settings(DOCUMENTOS_DIR=self._planilla()):
-            self._preguntar("¿quién está de vacaciones en CENCOSUD?", cliente)
-            self._preguntar("quien esta de vacaciones en general", cliente)
-            tercera = self._preguntar("están disponibles", cliente)
-        self.assertIsNone(tercera["meta"].get("grupo_heredado"))
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_recargar_la_pagina_limpia_el_contexto(self, mocked):
-        cliente = self.client
-        with override_settings(DOCUMENTOS_DIR=self._planilla()):
-            self._preguntar("¿quiénes están en el equipo de CENCOSUD?", cliente)
-            cliente.get("/api/status/")          # lo llama la página al cargar
-            segunda = self._preguntar("están disponibles", cliente)
-        self.assertIsNone(segunda["meta"].get("grupo_heredado"))
-
-    def test_distingue_fragmento_de_pregunta_completa(self):
-        from chat.views import _es_continuacion
-        for fragmento in ("están disponibles", "y ahora?", "y mañana"):
-            self.assertTrue(_es_continuacion(fragmento), fragmento)
-        for completa in ("necesito saber quien esta de vacaciones",
-                         "quien esta de vacaciones en general",
-                         "cuantas personas hay activas",
-                         "todos"):
-            self.assertFalse(_es_continuacion(completa), completa)
-
-
 class InfoPersonaTests(TestCase):
     """`info_persona`: la herramienta que cubre "quien es X" / "que cuentas
     maneja X" con una sola llamada, en vez de una por cada forma de decirlo.
@@ -1545,8 +875,8 @@ class InfoPersonaTests(TestCase):
 @override_settings(GEMINI_API_KEY="AIza-prueba",
                    ASISTENTE_ANONIMIZAR=False)
 class MemoriaConversacionTests(TestCase):
-    """El modo "todo por el modelo" necesita acordarse de lo ya hablado para
-    entender un seguimiento como "y esta disponible hoy?"."""
+    """El chat necesita acordarse de lo ya hablado para entender un
+    seguimiento como "y esta disponible hoy?"."""
 
     @patch("chat.asistente._cliente_gemini")
     def test_el_historial_previo_viaja_en_la_siguiente_llamada(self, mock_cliente):
@@ -1701,8 +1031,7 @@ class MarcaNoSeTests(TestCase):
         self.assertFalse(exitosa)
 
 
-@override_settings(GEMINI_API_KEY="AIza-prueba",
-                   ASISTENTE_SIEMPRE=True)
+@override_settings(GEMINI_API_KEY="AIza-prueba")
 class RespuestaNoExitosaTests(TestCase):
     """Cuando el modelo se rinde, la pregunta queda registrada como 'sin
     datos' y el usuario nunca ve el texto crudo de la marca."""
@@ -1778,110 +1107,14 @@ class FeedbackTests(TestCase):
         self.assertEqual(respuesta.status_code, 400)
 
 
-class IdentidadYCumplePersonaTests(TestCase):
-    """Nombrar a alguien no siempre pregunta por su disponibilidad: "quien es
-    X", "que cargo tiene X" y "cuando cumple anos X" son otras tres preguntas,
-    y tienen que responderse aunque el modelo no este disponible (esto corre
-    con las reglas, sin mockear Gemini)."""
-
-    def setUp(self):
-        cache.clear()
-
-    def _planilla_con_cuenta(self):
-        import openpyxl
-        carpeta = tempfile.mkdtemp()
-        libro = openpyxl.Workbook()
-        hoja = libro.active
-        hoja.title = "Detalle Cuenta-Persona"
-        for _ in range(3):
-            hoja.append([])
-        hoja.append(["BANCO SANTANDER", "Ana Rojas", None, "11.111.111-1"])
-        libro.save(Path(carpeta) / "cuentas.xlsx")
-        return carpeta
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_quien_es_da_identidad_no_ausencias(self, mocked):
-        cuerpo = self.client.post(
-            "/api/chat/", data='{"message":"quien es Ana Rojas?"}',
-            content_type="application/json",
-        ).json()
-        self.assertEqual(cuerpo["meta"]["intencion"], "identidad_persona")
-        self.assertIn("Analista", cuerpo["answer"])
-        self.assertNotIn("licencia", cuerpo["answer"].lower())
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_que_cargo_tiene_tambien_es_identidad(self, mocked):
-        cuerpo = self.client.post(
-            "/api/chat/", data='{"message":"que cargo tiene Ana Rojas?"}',
-            content_type="application/json",
-        ).json()
-        self.assertEqual(cuerpo["meta"]["intencion"], "identidad_persona")
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_que_cuentas_maneja_lista_las_cuentas(self, mocked):
-        with override_settings(DOCUMENTOS_DIR=self._planilla_con_cuenta()):
-            cuerpo = self.client.post(
-                "/api/chat/", data='{"message":"que cuentas maneja Ana Rojas?"}',
-                content_type="application/json",
-            ).json()
-        self.assertEqual(cuerpo["meta"]["intencion"], "identidad_persona")
-        self.assertIn("BANCO SANTANDER", cuerpo["answer"])
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_sin_cuentas_asignadas_lo_dice(self, mocked):
-        cuerpo = self.client.post(
-            "/api/chat/", data='{"message":"que clientes atiende Ana Rojas?"}',
-            content_type="application/json",
-        ).json()
-        self.assertIn("No tiene cuentas", cuerpo["answer"])
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_cuando_cumple_anos_no_es_ausencias(self, mocked):
-        cuerpo = self.client.post(
-            "/api/chat/", data='{"message":"cuando cumple años Ana Rojas?"}',
-            content_type="application/json",
-        ).json()
-        self.assertEqual(cuerpo["meta"]["intencion"], "cumpleanos_persona")
-        self.assertNotIn("licencia", cuerpo["answer"].lower())
-        self.assertNotIn("jornada", cuerpo["answer"].lower())
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_sin_ese_dato_no_ausencias(self, mocked):
-        """Luis Soto no tiene apodo raro, pero el cumpleanos si esta seteado;
-        si faltara, avisa en vez de caer a ausencias."""
-        from unittest.mock import patch as p
-        with p("chat.buk._cumple", return_value=""):
-            cuerpo = self.client.post(
-                "/api/chat/", data='{"message":"cuando cumple años Ana Rojas?"}',
-                content_type="application/json",
-            ).json()
-        self.assertIn("No tengo registrada", cuerpo["answer"])
-
-
 class PersonaPorCargoTests(TestCase):
     """"Quien es el gerente de X" no nombra a nadie: hay que buscar por el
-    texto del cargo."""
+    texto del cargo. `persona_por_cargo` (chat/herramientas.py) hace esa
+    busqueda; decidir cuándo usarla en vez de `info_persona` es cosa de
+    Gemini, no del código."""
 
     def setUp(self):
         cache.clear()
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_encuentra_por_cargo_exacto(self, mocked):
-        cuerpo = self.client.post(
-            "/api/chat/", data='{"message":"quien es la analista?"}',
-            content_type="application/json",
-        ).json()
-        self.assertEqual(cuerpo["meta"]["intencion"], "identidad_persona")
-        self.assertIn("Ana", cuerpo["answer"])
-        self.assertIn("Analista", cuerpo["answer"])
-
-    @patch("chat.buk.requests.get", side_effect=fake_get)
-    def test_cargo_inexistente_no_inventa(self, mocked):
-        cuerpo = self.client.post(
-            "/api/chat/", data='{"message":"quien es el gerente de finanzas?"}',
-            content_type="application/json",
-        ).json()
-        self.assertNotEqual(cuerpo["meta"]["intencion"], "identidad_persona")
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     def test_herramienta_persona_por_cargo(self, mocked):
@@ -1889,6 +1122,12 @@ class PersonaPorCargoTests(TestCase):
         resultado = herramientas.persona_por_cargo("analista")
         self.assertTrue(resultado["encontrada"])
         self.assertEqual(resultado["nombre"], "Ana Rojas")
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_cargo_inexistente_no_inventa(self, mocked):
+        from chat import herramientas
+        resultado = herramientas.persona_por_cargo("gerente de finanzas")
+        self.assertFalse(resultado["encontrada"])
 
 
 class EstadoAsistenteTests(TestCase):
@@ -1912,6 +1151,20 @@ class EstadoAsistenteTests(TestCase):
         self.assertTrue(estado["disponible"])
         self.assertIsNone(estado["motivo"])
         self.assertEqual(estado["modelo"], settings.GEMINI_MODEL)
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_FALLAS_MAX=3)
+    def test_una_falla_aislada_conserva_el_motivo_aunque_siga_disponible(self):
+        """La ULTIMA pregunta pudo fallar por creditos agotados sin que el
+        cortacircuitos se active todavia (necesita varias fallas seguidas):
+        el chat tiene que poder explicar ese error igual, no solo cuando ya
+        esta en pausa."""
+        from chat import asistente
+        asistente.registrar_falla(RuntimeError(
+            "429 RESOURCE_EXHAUSTED. Your prepayment credits are depleted."))
+        estado = asistente.estado()
+        self.assertTrue(estado["disponible"])           # 1 falla no activa la pausa
+        self.assertEqual(estado["motivo"], "prepago_agotado")
+        self.assertIn("prepagados", estado["motivo_legible"])
 
     @override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_FALLAS_MAX=1)
     def test_cuota_agotada_se_distingue_de_clave_invalida(self):

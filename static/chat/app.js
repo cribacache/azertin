@@ -87,9 +87,8 @@ function addMessage(text, type, items = null, meta = null, pregunta = null) {
     if (meta.desde_cache) partes.push("desde caché");
     else partes.push(`${meta.requests_buk} consulta${meta.requests_buk === 1 ? "" : "s"} a BUK`);
     if (meta.intencion === "modelo") partes.push("con modelo");
-    if (meta.parcial) partes.push("respuesta de respaldo");
-    if (meta.seccion) partes.push(meta.seccion);
-    if (meta.parcial) tag.dataset.respaldo = "1";
+    if (meta.intencion === "no_disponible") partes.push("Gemini no disponible");
+    if (meta.intencion === "no_disponible") tag.dataset.respaldo = "1";
     tag.textContent = partes.join(" · ");
     cuerpo.appendChild(tag);
   }
@@ -170,7 +169,8 @@ async function checkConnection() {
     detail.textContent = `${result.personas_activas} personas`;
 
     // Que modelo esta respondiendo ahora, y si Gemini no esta disponible,
-    // por que: sin esto una respuesta de respaldo parece un bug del bot.
+    // por que: no hay reglas de respaldo, asi que sin esto una respuesta de
+    // error parece un bug del bot en vez de la cuota agotada.
     const asistente = result.asistente;
     if (asistente && modelDot && modelTitle) {
       modelDot.classList.remove("ok", "off");
@@ -180,10 +180,10 @@ async function checkConnection() {
         modelPill.title = `Respondiendo con ${asistente.modelo}.`;
       } else {
         modelDot.classList.add("off");
-        modelTitle.textContent = `Reglas · ${asistente.motivo_legible}`;
+        modelTitle.textContent = `No disponible · ${asistente.motivo_legible}`;
         modelPill.title =
           `${asistente.modelo}: ${asistente.motivo_legible}. ` +
-          "Mientras tanto responden las reglas fijas, sin el modelo.";
+          "El chat avisa el error en vez de responder mientras tanto.";
       }
     }
   } catch (error) {
@@ -214,8 +214,9 @@ form.addEventListener("submit", async (event) => {
     escribiendo.remove();
     if (!response.ok) throw new Error(result.error);
     addMessage(result.answer, "bot", result.items, result.meta, message);
-    // apenada si tuvo que responder de respaldo, contenta si salió bien
-    estadoMascota(result.meta && result.meta.parcial ? "apenado" : "feliz", 2200);
+    // apenada si Gemini no estaba disponible, contenta si salió bien
+    const noDisponible = result.meta && result.meta.intencion === "no_disponible";
+    estadoMascota(noDisponible ? "apenado" : "feliz", 2200);
   } catch (error) {
     escribiendo.remove();
     estadoMascota("apenado", 3000);

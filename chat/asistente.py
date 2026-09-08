@@ -1,7 +1,7 @@
 """Capa de lenguaje natural sobre las herramientas de `chat/herramientas.py`.
 
-Se usa solo como respaldo: lo que el router de reglas ya entiende se responde
-sin gastar tokens. El modelo no recibe la clave de BUK ni el payload crudo, solo
+Es la unica via de respuesta: no hay un router de reglas detras que conteste
+si esto falla. El modelo no recibe la clave de BUK ni el payload crudo, solo
 puede llamar a las funciones declaradas en `herramientas.ESQUEMAS`.
 
 Solo Gemini: es el proveedor con presupuesto aprobado. Hubo un respaldo con
@@ -9,7 +9,6 @@ OpenAI mientras se evaluaba, pero se saco del todo al confirmarse Gemini, para
 no dejar una segunda ruta sin financiar a medio programar.
 """
 
-import json
 import logging
 import re
 
@@ -40,9 +39,6 @@ Reglas:
   tal cual. Para enumerar personas usa una linea por persona con guion.
 - Ante un saludo o una cortesia, responde con naturalidad en una linea y ofrece
   ayuda. No llames herramientas ni digas que te falta informacion.
-- Si el mensaje trae un bloque DATOS YA CONSULTADOS, usalo directamente en vez
-  de volver a pedir lo mismo con una herramienta. Llama a una herramienta solo
-  si necesitas algo que no este ahi.
 - "Quien es X", "que cargo tiene X", "que cuentas maneja X" y "que clientes
   maneja X" son la misma familia de pregunta: usa `info_persona`, no
   `ausencias_de_persona`. "Quien es del equipo/cuenta de Y" y "muestrame el
@@ -83,22 +79,6 @@ def _separar_exito(texto):
     if limpio.upper().startswith(MARCA_SIN_DATOS):
         return limpio[len(MARCA_SIN_DATOS):].strip(), False
     return limpio, True
-
-
-def _con_contexto(mensaje, contexto, alias):
-    """Adjunta lo que las reglas ya trajeron, para ahorrar un viaje al modelo.
-
-    Pasa por el mismo mapa de alias que los resultados de las herramientas: si
-    no, la anonimizacion quedaria burlada por este atajo.
-    """
-    if not contexto:
-        return mensaje
-    if settings.ASISTENTE_ANONIMIZAR:
-        contexto = _anonimizar(contexto, alias)
-    return (
-        f"{mensaje}\n\n--- DATOS YA CONSULTADOS (no los vuelvas a pedir) ---\n"
-        f"{json.dumps(contexto, ensure_ascii=False, default=str)}"
-    )
 
 
 class SinConfigurar(Exception):
@@ -192,15 +172,20 @@ def estado():
             "motivo": "sin_clave",
             "motivo_legible": "no hay clave de API configurada para Gemini",
         }
+    # Se guarda desde la primera falla, no solo cuando se activa la pausa: si
+    # la ULTIMA pregunta fallo (créditos agotados, por ejemplo) el aviso en el
+    # chat tiene que decir eso, aunque todavia no se hayan acumulado las
+    # `ASISTENTE_FALLAS_MAX` seguidas que activan la pausa.
+    motivo = cache.get(CLAVE_MOTIVO)
     if en_pausa():
-        motivo = cache.get(CLAVE_MOTIVO) or "error_proveedor"
+        motivo = motivo or "error_proveedor"
         return {
             "disponible": False, "proveedor": "gemini", "modelo": modelo(),
             "motivo": motivo, "motivo_legible": MOTIVOS_LEGIBLES[motivo],
         }
     return {
         "disponible": True, "proveedor": "gemini", "modelo": modelo(),
-        "motivo": None, "motivo_legible": None,
+        "motivo": motivo, "motivo_legible": MOTIVOS_LEGIBLES.get(motivo) if motivo else None,
     }
 
 
@@ -290,7 +275,7 @@ def _declaraciones_gemini():
     return [types.Tool(function_declarations=funciones)]
 
 
-def _responder_gemini(mensaje, hoy, contexto=None, historial_previo=None, alias=None):
+def _responder_gemini(mensaje, hoy, historial_previo=None, alias=None):
     from google.genai import types
 
     cliente = _cliente_gemini()
@@ -315,7 +300,7 @@ def _responder_gemini(mensaje, hoy, contexto=None, historial_previo=None, alias=
         types.Content(role=turno["role"], parts=[types.Part.from_text(text=turno["texto"])])
         for turno in (historial_previo or [])
     ]
-    mensaje_actual = _con_contexto(mensaje, contexto, alias)
+    mensaje_actual = mensaje
     historial.append(types.Content(role="user", parts=[types.Part.from_text(text=mensaje_actual)]))
 
     while pasos < settings.ASISTENTE_MAX_PASOS:
@@ -363,17 +348,15 @@ def _responder_gemini(mensaje, hoy, contexto=None, historial_previo=None, alias=
                   "historial": historial_previo or [], "alias": alias}
 
 
-def responder(mensaje, hoy, contexto=None, historial=None, alias=None):
+def responder(mensaje, hoy, historial=None, alias=None):
     """Devuelve (texto, meta). Lanza SinConfigurar o el error de Gemini.
 
-    `contexto` es lo que las reglas ya consultaron: entregarselo evita que el
-    modelo gaste un viaje extra pidiendo datos que ya tenemos. `historial` y
-    `alias` son la memoria de la conversacion (ver `views.py`).
+    `historial` y `alias` son la memoria de la conversacion (ver `views.py`).
     """
     if not clave():
         raise SinConfigurar("No hay clave para Gemini. Configura GEMINI_API_KEY en .env")
     try:
-        resultado = _responder_gemini(mensaje, hoy, contexto, historial, alias)
+        resultado = _responder_gemini(mensaje, hoy, historial, alias)
     except Exception as error:
         registrar_falla(error)
         raise

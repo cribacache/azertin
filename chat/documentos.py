@@ -309,9 +309,3 @@ def buscar(mensaje, cuantas=3):
         {"titulo": s["titulo"], "cuerpo": s["cuerpo"], "origen": s["origen"]}
         for puntaje, s in marcadas[:cuantas]
     ]
-
-
-def responder(mensaje):
-    """Mejor seccion para la pregunta, o None si ninguna alcanza el minimo."""
-    encontradas = buscar(mensaje, cuantas=1)
-    return encontradas[0] if encontradas else None

@@ -68,15 +68,6 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
 ]
 
-# Hasta cuantas personas se listan por nombre en una respuesta. Mas que esto
-# satura el chat y basta el numero.
-LISTAR_HASTA = int(os.getenv("LISTAR_HASTA", "25"))
-
-# Cuanto dura una desambiguacion pendiente ("¿cual de las cuatro Javi?").
-# Corta a proposito: si el usuario cambia de tema, la siguiente pregunta no
-# debe interpretarse como respuesta a algo que ya olvido.
-DESAMBIGUACION_SEGUNDOS = int(os.getenv("DESAMBIGUACION_SEGUNDOS", "180"))
-
 ROOT_URLCONF = "config.urls"
 TEMPLATES = [
     {
@@ -158,10 +149,6 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 if "test" in sys.argv:
     GEMINI_API_KEY = ""
 
-# True = todas las preguntas pasan por el modelo (responde mejor, cuesta mas).
-# False = el modelo solo atiende lo que las reglas no entienden.
-ASISTENTE_SIEMPRE = os.getenv("ASISTENTE_SIEMPRE", "False").lower() == "true"
-
 # Reemplaza los nombres de la nomina por alias antes de mandarlos al modelo y
 # los restituye en la respuesta. No protege el nombre que el usuario escribio.
 ASISTENTE_ANONIMIZAR = os.getenv("ASISTENTE_ANONIMIZAR", "False").lower() == "true"
@@ -188,10 +175,6 @@ EMBEDDINGS_PESO = float(os.getenv("EMBEDDINGS_PESO", "0.85"))
 # arriba porque la variable se define despues y lo sobrescribiria.
 if "test" in sys.argv:
     EMBEDDINGS_ACTIVOS = False
-
-# Cuando nadie cumple anos en la fecha preguntada, se mira hasta aca adelante
-# para poder decir a quien hay que saludar pronto.
-CUMPLE_HORIZONTE_DIAS = int(os.getenv("CUMPLE_HORIZONTE_DIAS", "45"))
 
 # Segundos que se guarda la respuesta completa a una pregunta. Repetirla dentro
 # de esta ventana no consulta BUK ni gasta tokens.
