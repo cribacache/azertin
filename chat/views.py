@@ -2,17 +2,52 @@ import json
 import logging
 from datetime import date
 
+from django.conf import settings
+from django.core.cache import cache
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
-from . import asistente, buk, documentos, respuestas
-from .models import contar, registrar
+from . import antiprompt, asistente, autorizacion, buk, documentos, perfil, ratelimit, respuestas
+from .forms import PropuestaForm
+from .models import EventoSeguridad, PerfilUsuario, contar, registrar, registrar_evento
 
 logger = logging.getLogger(__name__)
 
 
-def responder_con_modelo(mensaje, historial=None, alias=None):
+def _client_ip(request):
+    """IP de quien pide, para el rate limit de /propuestas/ (sin login).
+
+    Se usa REMOTE_ADDR a secas: X-Forwarded-For lo puede falsear el cliente y
+    aca no hay un proxy de confianza declarado. Si en produccion se pone uno
+    delante, hay que resolver la IP real segun ese proxy.
+    """
+    return request.META.get("REMOTE_ADDR") or "desconocida"
+
+
+def _presupuesto_llm_ok(usuario):
+    """Descuenta una consulta del cupo diario del usuario y dice si le queda.
+
+    Cupo aproximado (ventana por dia calendario, contador en el cache
+    compartido). 0 = sin limite.
+    """
+    limite = getattr(settings, "LLM_PRESUPUESTO_DIARIO", 0)
+    if not limite:
+        return True
+    llave = f"llm:{usuario.pk}:{date.today().isoformat()}"
+    try:
+        if cache.add(llave, 1, 60 * 60 * 26):
+            return True
+        try:
+            return cache.incr(llave) <= limite
+        except ValueError:
+            cache.set(llave, 1, 60 * 60 * 26)
+            return True
+    except Exception:  # cache caido: no bloquear por eso
+        return True
+
+
+def responder_con_modelo(mensaje, historial=None, alias=None, contexto=None):
     """Le pregunta a Gemini. Es la unica via de respuesta: no hay reglas de
     respaldo detras.
 
@@ -23,7 +58,7 @@ def responder_con_modelo(mensaje, historial=None, alias=None):
     if not asistente.disponible():
         return None
     try:
-        texto, meta = asistente.responder(mensaje, date.today(), historial, alias)
+        texto, meta = asistente.responder(mensaje, date.today(), historial, alias, contexto)
     except asistente.SinConfigurar:
         return None
     except Exception as error:  # el modelo no puede tumbar la aplicacion
@@ -98,6 +133,37 @@ def chat_page(request):
     return render(request, "chat/index.html")
 
 
+def propuestas_nueva(request):
+    """Cualquiera puede proponer una idea, sin iniciar sesion.
+
+    A diferencia de ConsultaNoResuelta (que llena el sistema solo) y del
+    admin (que necesita ser staff), esta es la puerta de entrada abierta:
+    cualquier persona de Azerta puede dejar una idea. Quien administra el
+    backlog la revisa y le cambia el estado despues, desde /admin/.
+    """
+    if request.method == "POST":
+        ip = _client_ip(request)
+        if ratelimit.excedido(f"prop:{ip}", settings.RATE_LIMIT_PROPUESTAS):
+            registrar_evento(EventoSeguridad.RATE_LIMIT, None, f"/propuestas/ ip={ip}")
+            form = PropuestaForm(request.POST)
+            form.add_error(None, "Recibimos varias propuestas desde aquí hace poco. "
+                                 "Prueba de nuevo en un rato.")
+            return render(request, "chat/propuesta_nueva.html",
+                          {"form": form, "enviada": False})
+
+        form = PropuestaForm(request.POST)
+        if form.is_valid():
+            # Si cayó en el honeypot no se guarda, pero se muestra el mismo
+            # "gracias": no le confirmamos al bot que lo detectamos.
+            if not form.es_spam():
+                form.save()
+            return render(request, "chat/propuesta_nueva.html",
+                         {"form": PropuestaForm(), "enviada": True})
+    else:
+        form = PropuestaForm()
+    return render(request, "chat/propuesta_nueva.html", {"form": form, "enviada": False})
+
+
 @require_POST
 def api_feedback(request):
     """El boton de pulgar abajo en una respuesta: la marca como no exitosa.
@@ -106,6 +172,9 @@ def api_feedback(request):
     con total confianza y quien pregunto dice que estaba mal. Eso es lo que
     hay que revisar primero.
     """
+    if ratelimit.excedido(f"fb:{request.user.pk}", settings.RATE_LIMIT_FEEDBACK):
+        return JsonResponse({"ok": False}, status=429)
+
     try:
         body = json.loads(request.body or "{}")
     except json.JSONDecodeError:
@@ -144,6 +213,16 @@ def api_status(request):
 
 @require_POST
 def chat_message(request):
+    usuario = request.user
+
+    # 1. Frecuencia: rafaga corta y tope por hora, por usuario.
+    if (ratelimit.excedido(f"chat:{usuario.pk}", settings.RATE_LIMIT_CHAT)
+            or ratelimit.excedido(f"chat-h:{usuario.pk}", settings.RATE_LIMIT_CHAT_HORA)):
+        registrar_evento(EventoSeguridad.RATE_LIMIT, usuario, "POST /api/chat/")
+        return JsonResponse(
+            {"error": "Estás enviando consultas muy seguido. Espera unos segundos."},
+            status=429)
+
     try:
         body = json.loads(request.body or "{}")
     except json.JSONDecodeError:
@@ -153,10 +232,41 @@ def chat_message(request):
     if not mensaje:
         return JsonResponse({"error": "Escribe una pregunta"}, status=400)
 
-    hoy = date.today()
+    # 2. Largo: una consulta enorme solo infla el costo del modelo.
+    if len(mensaje) > settings.ASISTENTE_MAX_CARACTERES:
+        registrar_evento(EventoSeguridad.ENTRADA_LARGA, usuario, f"{len(mensaje)} caracteres")
+        return JsonResponse(
+            {"error": f"La consulta es muy larga (máximo "
+                      f"{settings.ASISTENTE_MAX_CARACTERES} caracteres)."},
+            status=400)
 
-    # Misma pregunta el mismo dia: se sirve del cache, sin BUK ni tokens.
-    cacheada = respuestas.obtener(mensaje, hoy)
+    # 3. Inyeccion de prompt: se corta antes de gastar una llamada a Gemini.
+    if antiprompt.es_sospechosa(mensaje):
+        registrar_evento(EventoSeguridad.INJECTION, usuario, mensaje[:200])
+        return JsonResponse({
+            "answer": ("No puedo procesar esa consulta. Si es una pregunta real sobre "
+                       "Azerta, reformúlala sin instrucciones para el asistente."),
+            "items": [],
+            "meta": {"intencion": "bloqueada", "requests_buk": 0},
+        })
+
+    hoy = date.today()
+    ctx = perfil.contexto(usuario)
+
+    # 4. Rol sin acceso: no se consulta ni el cache ni el modelo. Se responde
+    # como un mensaje normal del bot (200) para que la interfaz lo muestre tal
+    # cual en vez de caer en el error generico.
+    if ctx.rol == PerfilUsuario.SIN_ACCESO:
+        registrar_evento(EventoSeguridad.AUTZ_DENEGADA, usuario, "rol sin_acceso")
+        return JsonResponse({
+            "answer": autorizacion.MSG_SIN_ACCESO,
+            "items": [], "meta": {"intencion": "sin_acceso", "requests_buk": 0},
+        })
+
+    ambito = perfil.ambito_cache(ctx)
+
+    # Misma pregunta el mismo dia y mismo alcance: se sirve del cache.
+    cacheada = respuestas.obtener(mensaje, hoy, ambito)
     if cacheada is not None:
         cacheada = dict(cacheada)
         cacheada["meta"] = {**cacheada.get("meta", {}), "desde_cache": True,
@@ -164,10 +274,18 @@ def chat_message(request):
         contar(mensaje, cacheada["meta"].get("intencion"), desde_cache=True)
         return JsonResponse(cacheada)
 
+    # 5. Cupo diario de consultas al modelo, por usuario.
+    if not _presupuesto_llm_ok(usuario):
+        registrar_evento(EventoSeguridad.PRESUPUESTO, usuario, "límite diario")
+        return JsonResponse({
+            "answer": "Alcanzaste el máximo de consultas por hoy. Vuelve a intentar mañana.",
+            "items": [], "meta": {"intencion": "presupuesto", "requests_buk": 0},
+        })
+
     historial_modelo = request.session.get("historial_modelo")
     alias_modelo = request.session.get("alias_modelo")
 
-    del_modelo = responder_con_modelo(mensaje, historial_modelo, alias_modelo)
+    del_modelo = responder_con_modelo(mensaje, historial_modelo, alias_modelo, ctx)
     if del_modelo:
         respuesta = del_modelo
     elif del_modelo is False:
@@ -185,6 +303,6 @@ def chat_message(request):
         request.session["alias_modelo"] = nuevo_alias or {}
 
     respuesta["meta"]["desde_cache"] = False
-    respuestas.guardar(mensaje, hoy, respuesta)
+    respuestas.guardar(mensaje, hoy, respuesta, ambito)
     contar(mensaje, respuesta["meta"].get("intencion"))
     return JsonResponse(respuesta)

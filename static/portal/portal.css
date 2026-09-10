@@ -1,0 +1,76 @@
+/* Estilos del portal de administracion (/portal/).
+   En archivo aparte, no en un <style> inline, para que la CSP pueda prohibir
+   estilos inline (ver chat/middleware.py::SecurityHeadersMiddleware).
+
+   El portal se planta sobre fondo claro propio, sin depender del tema (oscuro)
+   de app.css: es una pantalla de trabajo, no del chat. */
+
+html, body { background: #eef0f4; color: #1b1d29; }
+
+.portal {
+  max-width: 1040px;
+  margin: 24px auto;
+  padding: 28px 30px 48px;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 1px 3px rgba(20, 22, 40, .12);
+}
+.portal h1 { font-weight: 900; font-size: 1.5rem; margin: 0 0 4px; color: #14162a; }
+.portal .intro { color: #5b5f73; margin: 0 0 4px; font-size: .95rem; }
+.portal a.salir-link { color: #5b5f73; text-decoration: none; font-weight: 700; font-size: .9rem; }
+.portal nav {
+  display: flex;
+  gap: 20px;
+  margin: 16px 0 24px;
+  font-weight: 700;
+  border-bottom: 1px solid #e2e4ec;
+}
+.portal nav a {
+  color: #5b5f73;
+  text-decoration: none;
+  padding: 0 2px 8px;
+  border-bottom: 2px solid transparent;
+}
+.portal nav a.activo { color: #14162a; border-color: #14162a; }
+.portal table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+.portal th, .portal td {
+  text-align: left;
+  padding: 10px 10px;
+  border-bottom: 1px solid #e7e7ee;
+  vertical-align: top;
+}
+.portal th { font-weight: 700; color: #5b5f73; border-bottom: 2px solid #d3d6e0; }
+.portal tbody tr:hover td { background: #f7f8fc; }
+.portal .tenue { color: #9195a8; }
+.portal select, .portal button { font: inherit; padding: 4px 6px; }
+.portal button {
+  cursor: pointer;
+  border: 1px solid #c7cad8;
+  border-radius: 6px;
+  background: #f3f4f9;
+}
+.portal .rol-form { display: flex; gap: 6px; align-items: center; }
+.portal .pill {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: .78rem;
+  font-weight: 700;
+  background: #e8ebf6;
+  color: #33406b;
+}
+.portal .pill.gerencia { background: #e2ecff; color: #1c4fb3; }
+.portal .pill.ejecutivo { background: #e6f3e7; color: #2f7d32; }
+.portal .pill.sin_acceso, .portal .pill.injection { background: #fde7e7; color: #b3261e; }
+.portal .pill.autz_denegada { background: #fff1df; color: #a45c00; }
+.portal .aviso {
+  background: #fff1df;
+  color: #7a4d00;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 18px;
+}
+.portal .filtros { margin-bottom: 16px; font-size: .88rem; }
+.portal .filtros a { color: #5b5f73; text-decoration: none; margin-right: 14px; }
+.portal .filtros a.activo { color: #14162a; font-weight: 700; }
+.portal .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }

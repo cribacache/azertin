@@ -117,6 +117,13 @@ def _nombre(empleado):
     return " ".join(p for p in partes if p).strip() or f"Empleado #{empleado.get('id')}"
 
 
+def _email(empleado):
+    """Correo corporativo, solo como llave para cruzar con la cuenta de Google
+    de quien pregunta (ver chat/perfil.py). No sale en ninguna respuesta."""
+    valor = empleado.get("email") or empleado.get("corporate_email") or ""
+    return str(valor).strip().lower()
+
+
 def _apodo(empleado):
     """Apodo desde custom_attributes.
 
@@ -199,7 +206,7 @@ def _cargo(empleado):
 def directorio(forzar=False):
     """Mapa {id: {id, nombre, cargo, area, cumple}} de activos, cacheado."""
     if not forzar:
-        cacheado = cache.get("buk:directorio:v4")
+        cacheado = cache.get("buk:directorio:v5")
         if cacheado is not None:
             return cacheado, 0
 
@@ -229,11 +236,14 @@ def directorio(forzar=False):
             # el rut solo sirve para cruzar con el Excel de cuentas; se descarta
             # apenas se arma ese cruce y nunca sale en una respuesta
             "_rut": _rut(emp),
+            # el email solo cruza la cuenta de Google con el empleado para saber
+            # el rol de quien pregunta; nunca se expone en una respuesta
+            "email": _email(emp),
         }
     from . import cuentas
     cuentas.asignar(mapa)
 
-    cache.set("buk:directorio:v4", mapa, settings.BUK_CACHE_TTL)
+    cache.set("buk:directorio:v5", mapa, settings.BUK_CACHE_TTL)
     return mapa, hechos
 
 
@@ -375,3 +385,83 @@ def fuera(desde, hasta, categoria=None, subtipo=None):
         hechos += req
 
     return registros, hechos
+
+
+# ---------------------------------------------------------------------------
+# Beneficios (modulo aparte, permiso agregado por separado)
+#
+# La API no tiene un endpoint para LISTAR el catalogo completo de beneficios
+# (/benefits/benefit_versions solo sirve de a uno, por id). El catalogo se
+# arma juntando los `available_version_id` que aparecen en las solicitudes
+# reales -asi que "listar_beneficios" en la practica es "beneficios que se
+# han solicitado al menos una vez", no el catalogo teorico completo.
+# ---------------------------------------------------------------------------
+
+ESTADOS_BENEFICIO = {
+    "approved": "aprobado",
+    "pre_approved": "pre-aprobado",
+    "in_process": "en proceso",
+    "incomplete": "incompleto",
+    "rejected": "rechazado",
+    "cancelled": "cancelado",
+}
+
+
+def _nombre_beneficio(version_id):
+    """Nombre de un beneficio por su version_id.
+
+    Se cachea aparte de las solicitudes y con un TTL mas largo: la
+    definicion de un beneficio ("Dia libre por cumpleanos") casi no cambia,
+    a diferencia de quien lo solicito.
+    """
+    clave = f"buk:beneficio:nombre:{version_id}"
+    nombre = cache.get(clave)
+    if nombre is not None:
+        return nombre, 0
+    try:
+        detalle = _request(f"/benefits/benefit_versions/{version_id}")["data"]
+        nombre = detalle.get("name") or f"Beneficio #{version_id}"
+    except BukError:
+        nombre = f"Beneficio #{version_id}"
+    cache.set(clave, nombre, settings.BUK_CACHE_TTL * 6)
+    return nombre, 1
+
+
+def beneficios(forzar=False):
+    """Todas las solicitudes de beneficios, con el nombre ya resuelto.
+
+    No expone `benefit_request_field_values`, `comments` ni
+    `cancel_comments`: son texto libre por solicitud (una direccion para un
+    permiso de mudanza, un motivo escrito a mano) y pueden traer informacion
+    personal que nadie pidio exponer, igual que el motivo de una licencia
+    medica en `ausencias()`.
+    """
+    clave = "buk:beneficios:solicitudes"
+    if not forzar:
+        cacheado = cache.get(clave)
+        if cacheado is not None:
+            return cacheado, 0
+
+    # Este endpoint no usa "page_size" como el resto de la API de BUK: su
+    # parametro real es "per_page" (confirmado contra el spec oficial en
+    # /apidocs). Sin esto, el "page_size" generico de `_paginar` lo ignora
+    # en silencio y pagina de a 25, el default del endpoint.
+    registros, hechos = _paginar("/benefits/benefit_requests", {"per_page": 100})
+    salida = []
+    for r in registros:
+        version_id = r.get("available_version_id")
+        if version_id is None:
+            continue
+        nombre, req = _nombre_beneficio(version_id)
+        hechos += req
+        estado = r.get("status")
+        salida.append({
+            "employee_id": r.get("person_id"),
+            "beneficio": nombre,
+            "estado": ESTADOS_BENEFICIO.get(estado, estado or "?"),
+            "solicitado": (r.get("requested_at") or "")[:10] or None,
+            "actualizado": (r.get("status_date") or r.get("updated_at") or "")[:10] or None,
+        })
+
+    cache.set(clave, salida, settings.BUK_CACHE_TTL)
+    return salida, hechos

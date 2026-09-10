@@ -1,0 +1,86 @@
+{% load static %}{% load assets %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proponer una idea · Iris</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static_v 'chat/app.css' %}">
+</head>
+<body>
+  <main class="shell shell-angosto">
+    <header class="topbar">
+      <a class="brand" href="{% url 'chat-page' %}" aria-label="Iris, inicio">Iris</a>
+      <a class="salir-link" href="{% url 'account_logout' %}" title="{{ user.email }}">Salir</a>
+    </header>
+
+    <section class="propuesta-panel">
+      {% if enviada %}
+        <div class="propuesta-gracias" role="status">
+          <p class="propuesta-gracias-titulo">¡Gracias! Tu idea quedó anotada.</p>
+          <p class="propuesta-gracias-detalle">
+            La va a revisar quien administra Iris para decidir cuándo se hace.
+          </p>
+          <div class="propuesta-acciones">
+            <a class="backlog-btn" href="{% url 'propuestas-nueva' %}">
+              <span class="backlog-btn-mas" aria-hidden="true">+</span>
+              <span>Proponer otra</span>
+            </a>
+            <button type="button" class="propuesta-volver" id="cerrar-pestana"
+                    data-chat-url="{% url 'chat-page' %}">
+              Cerrar esta pestaña
+            </button>
+          </div>
+        </div>
+      {% else %}
+        <h1 class="propuesta-titulo">Proponer una idea</h1>
+        <p class="propuesta-intro">
+          ¿Hay algo que Iris debería poder responder y todavía no puede? ¿Se
+          te ocurrió una mejora? Déjala acá — no hace falta iniciar sesión ni
+          decir quién eres.
+        </p>
+
+        {% if form.non_field_errors %}
+          <div class="propuesta-mensajes" role="alert">
+            {% for error in form.non_field_errors %}
+              <p class="propuesta-error">{{ error }}</p>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        <form class="propuesta-form" method="post" novalidate>
+          {% csrf_token %}
+          {{ form.web }}
+
+          <fieldset class="propuesta-tipo">
+            <legend>{{ form.categoria.label }}</legend>
+            {{ form.categoria }}
+          </fieldset>
+
+          <label class="propuesta-campo" for="{{ form.titulo.id_for_label }}">
+            {{ form.titulo.label }}
+            {{ form.titulo }}
+            {% for error in form.titulo.errors %}
+              <span class="propuesta-error">{{ error }}</span>
+            {% endfor %}
+          </label>
+
+          <label class="propuesta-campo" for="{{ form.descripcion.id_for_label }}">
+            {{ form.descripcion.label }}
+            {{ form.descripcion }}
+          </label>
+
+          <button type="submit" class="propuesta-enviar">
+            <span>Enviar propuesta</span>
+            <span aria-hidden="true">↗</span>
+          </button>
+        </form>
+      {% endif %}
+    </section>
+  </main>
+  <script src="{% static_v 'chat/propuesta.js' %}"></script>
+</body>
+</html>

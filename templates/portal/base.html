@@ -1,0 +1,30 @@
+{% load static %}{% load assets %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block titulo %}Portal{% endblock %} · Iris</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static_v 'chat/app.css' %}">
+  <link rel="stylesheet" href="{% static_v 'portal/portal.css' %}">
+</head>
+<body>
+  <main class="portal">
+    <div class="top">
+      <div>
+        <h1>{% block encabezado %}Portal{% endblock %}</h1>
+        <p class="intro">{% block subtitulo %}{% endblock %}</p>
+      </div>
+      <a class="salir-link" href="{% url 'chat-page' %}">Volver al chat</a>
+    </div>
+    <nav>
+      <a href="{% url 'portal-usuarios' %}" class="{% block nav_usuarios %}{% endblock %}">Usuarios y roles</a>
+      <a href="{% url 'portal-eventos' %}" class="{% block nav_eventos %}{% endblock %}">Eventos de seguridad</a>
+    </nav>
+    {% block contenido %}{% endblock %}
+  </main>
+</body>
+</html>

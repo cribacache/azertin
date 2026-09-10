@@ -1,0 +1,66 @@
+{% extends "portal/base.html" %}
+
+{% block titulo %}Usuarios{% endblock %}
+{% block encabezado %}Usuarios y roles{% endblock %}
+{% block subtitulo %}Quién puede preguntar qué. Un usuario sin rol asignado
+entra como <strong>{{ rol_defecto }}</strong> (acceso acotado).{% endblock %}
+{% block nav_usuarios %}activo{% endblock %}
+
+{% block contenido %}
+  {% if not buk_ok %}
+    <div class="aviso">No pude conectar con BUK: la columna “Empleado BUK” va vacía,
+      pero los roles se pueden cambiar igual.</div>
+  {% endif %}
+
+  <table>
+    <thead>
+      <tr>
+        <th>Cuenta</th>
+        <th>Empleado BUK</th>
+        <th>Familia de rol</th>
+        <th>Rol en Iris</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for fila in filas %}
+        <tr>
+          <td>
+            {{ fila.usuario.email|default:fila.usuario.username }}
+            {% if fila.es_superuser %}<span class="pill gerencia">superuser</span>{% endif %}
+          </td>
+          <td>
+            {% if fila.empleado %}
+              {{ fila.empleado.nombre }}<br>
+              <span class="tenue">{{ fila.empleado.cargo }}{% if fila.empleado.area %} · {{ fila.empleado.area }}{% endif %}</span>
+            {% else %}
+              <span class="tenue">sin match</span>
+            {% endif %}
+          </td>
+          <td>{{ fila.empleado.familia|default:"—" }}</td>
+          <td>
+            {% if fila.es_superuser %}
+              <span class="pill gerencia">gerencia (superuser)</span>
+            {% elif fila.bloqueado %}
+              <span class="pill {{ fila.rol }}">{{ fila.rol }}</span>
+              <span class="tenue">solo un superusuario lo cambia</span>
+            {% else %}
+              <form method="post" class="rol-form">
+                {% csrf_token %}
+                <input type="hidden" name="usuario_id" value="{{ fila.usuario.pk }}">
+                <select name="rol">
+                  {% for valor, etiqueta in roles %}
+                    <option value="{{ valor }}" {% if valor == fila.rol %}selected{% endif %}>{{ etiqueta }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit">Guardar</button>
+                {% if not fila.rol_explicito %}<span class="tenue">(por defecto)</span>{% endif %}
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="tenue">Todavía no hay usuarios registrados.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

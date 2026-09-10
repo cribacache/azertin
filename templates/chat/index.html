@@ -20,10 +20,22 @@
           <span class="model-signal-title" id="model-signal-title">Verificando modelo</span>
         </div>
       </div>
-      <div class="signal" id="connection-card">
-        <span class="signal-dot" id="signal-dot"></span>
-        <span id="connection-title">Conectando</span>
-        <span class="signal-detail" id="connection-detail"></span>
+      <div class="topbar-derecha">
+        <a class="backlog-btn" href="{% url 'propuestas-nueva' %}"
+           target="_blank" rel="noopener"
+           title="Proponer una idea o mejora a futuro para Iris (se abre en otra pestaña, sin perder esta conversación)">
+          <span class="backlog-btn-mas" aria-hidden="true">+</span>
+          <span>Propuesta</span>
+        </a>
+        <div class="signal" id="connection-card">
+          <span class="signal-dot" id="signal-dot"></span>
+          <span id="connection-title">Conectando</span>
+          <span class="signal-detail" id="connection-detail"></span>
+        </div>
+        {% if user.is_staff %}
+          <a class="salir-link" href="{% url 'portal-usuarios' %}" title="Portal de administración">Portal</a>
+        {% endif %}
+        <a class="salir-link" href="{% url 'account_logout' %}" title="{{ user.email }}">Salir</a>
       </div>
     </header>
 

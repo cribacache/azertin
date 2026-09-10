@@ -1,7 +1,11 @@
 Django>=5.2,<6.0
+django-allauth[socialaccount]>=65.19,<66.0  # login con Google
+gunicorn>=23.0,<24.0  # servidor para varios usuarios a la vez; runserver es solo para desarrollo
 python-dotenv>=1.1,<2.0
 requests>=2.32,<3.0
 google-genai>=1.0,<3.0
+google-auth>=2.30,<3.0  # cuenta de servicio para leer la carpeta de Drive
 Pillow>=11.0,<13.0  # solo para preparar assets, no lo usa la app en runtime
 pymupdf>=1.24,<2.0
 openpyxl>=3.1,<4.0  # lee la planilla de cuentas
+python-docx>=1.1,<2.0  # extrae texto de .docx subidos a Drive

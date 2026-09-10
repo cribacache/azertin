@@ -5,6 +5,12 @@ __pycache__/
 venv/
 .env
 db.sqlite3
+db.sqlite3-wal
+db.sqlite3-shm
 .DS_Store
 staticfiles/
 .embeddings.json
+.drive_cache/
+# Credenciales de la cuenta de servicio de Google Drive
+*.service-account.json
+drive-credentials*.json

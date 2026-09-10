@@ -133,6 +133,12 @@ body::after {
 .model-signal-dot.ok { background: var(--rosado); animation: none; box-shadow: 0 0 0 3px rgba(255,0,102,.2); }
 .model-signal-dot.off { background: var(--gris-claro); animation: none; }
 
+.topbar-derecha {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .signal {
   display: flex;
   align-items: center;
@@ -142,6 +148,40 @@ body::after {
   border-radius: 999px;
   color: var(--gris-claro);
   font-size: 11.5px;
+}
+
+/* Boton al backlog manual de propuestas/mejoras (admin de Django). A
+   diferencia de las pilas de estado (.signal, .model-signal), que solo
+   informan, este SI hace algo al hacer clic: lleva un color propio para que
+   se note que es interactivo. */
+.backlog-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px 6px 11px;
+  border: 1px solid rgba(255,0,102,.35);
+  border-radius: 999px;
+  color: var(--claro);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color .15s ease, background .15s ease;
+}
+
+.backlog-btn:hover { border-color: var(--rosado); background: rgba(255,0,102,.1); }
+.backlog-btn:focus-visible { outline: 2px solid var(--rosado); outline-offset: 2px; }
+
+.backlog-btn-mas {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--rosado);
+  color: var(--noche);
+  font-size: 12px;
+  line-height: 1;
 }
 
 .signal-detail { color: var(--gris-claro); }
@@ -431,6 +471,213 @@ body::after {
 
 .send-arrow { display: inline-block; transition: transform .2s ease; }
 
+/* ---------- pagina de propuestas ---------- */
+.shell-angosto { max-width: 560px; justify-content: center; gap: 28px; }
+.shell-angosto .topbar { height: auto; justify-content: flex-start; }
+
+.propuesta-panel { flex: none; }
+
+.propuesta-titulo {
+  margin: 0 0 10px;
+  color: var(--humo);
+  font-size: clamp(24px, 4vw, 30px);
+  font-weight: 900;
+  letter-spacing: -.02em;
+}
+
+.propuesta-intro {
+  margin: 0 0 26px;
+  color: var(--gris-claro);
+  font-size: 14.5px;
+  line-height: 1.55;
+  max-width: 46ch;
+}
+
+.propuesta-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.propuesta-tipo {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.propuesta-tipo legend {
+  padding: 0 0 10px;
+  color: var(--claro);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.propuesta-tipo ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.propuesta-tipo li { margin: 0; }
+
+.propuesta-tipo label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 16px;
+  border: 1px solid var(--linea);
+  border-radius: 999px;
+  color: var(--gris-claro);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+
+.propuesta-tipo input[type="radio"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--rosado);
+  margin: 0;
+}
+
+.propuesta-tipo label:hover { border-color: rgba(255,0,102,.4); }
+
+.propuesta-tipo label:has(input[type="radio"]:checked) {
+  border-color: var(--rosado);
+  background: rgba(255,0,102,.1);
+  color: var(--humo);
+}
+
+.propuesta-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  color: var(--claro);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.propuesta-campo input[type="text"],
+.propuesta-campo textarea {
+  border: 1px solid var(--linea);
+  border-radius: 14px;
+  padding: 13px 16px;
+  background: rgba(28, 28, 56, .55);
+  color: var(--humo);
+  font-family: inherit;
+  font-size: 14.5px;
+  font-weight: 400;
+  resize: vertical;
+  transition: border-color .2s ease;
+}
+
+.propuesta-campo input[type="text"]:focus,
+.propuesta-campo textarea:focus {
+  outline: none;
+  border-color: rgba(255, 0, 102, .5);
+}
+
+.propuesta-campo input::placeholder,
+.propuesta-campo textarea::placeholder { color: var(--gris); }
+
+.propuesta-error {
+  color: var(--rosado);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.propuesta-enviar {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 24px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--rosado);
+  color: #fff;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter .2s ease, transform .15s ease;
+}
+
+.propuesta-enviar:hover { filter: brightness(1.12); }
+.propuesta-enviar:active { transform: scale(.97); }
+.propuesta-enviar:focus-visible { outline: 2px solid var(--claro); outline-offset: 3px; }
+
+.propuesta-mensajes {
+  margin: -10px 0 22px;
+  padding: 12px 16px;
+  border: 1px solid rgba(255, 0, 102, .35);
+  border-radius: 14px;
+  background: rgba(255, 0, 102, .08);
+}
+
+.propuesta-mensajes .propuesta-error { margin: 0; }
+
+/* Boton de Google: fondo claro fijo, con o sin tema oscuro, siguiendo la
+   guia de marca de Google (nunca un boton de Google sobre fondo oscuro). */
+.google-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border: 1px solid #dadce0;
+  border-radius: 999px;
+  background: #fff;
+  color: #3c4043;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: box-shadow .15s ease, background .15s ease;
+}
+
+.google-btn:hover { background: #f8f9fa; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.google-btn:focus-visible { outline: 2px solid var(--rosado); outline-offset: 3px; }
+
+.salir-link {
+  color: var(--gris-claro);
+  font-size: 12px;
+  text-decoration: underline;
+  text-decoration-color: var(--linea);
+  white-space: nowrap;
+}
+
+.salir-link:hover { color: var(--claro); }
+
+.propuesta-gracias-titulo {
+  margin: 0 0 8px;
+  color: var(--humo);
+  font-size: clamp(22px, 4vw, 27px);
+  font-weight: 900;
+  letter-spacing: -.02em;
+}
+
+.propuesta-gracias-detalle {
+  margin: 0 0 24px;
+  color: var(--gris-claro);
+  font-size: 14.5px;
+  line-height: 1.55;
+  max-width: 46ch;
+}
+
+.propuesta-acciones { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+
+.propuesta-volver {
+  color: var(--gris-claro);
+  font-size: 13px;
+  text-decoration: underline;
+  text-decoration-color: var(--linea);
+}
+
+.propuesta-volver:hover { color: var(--claro); }
+
 @media (max-width: 560px) {
   .send-label { display: none; }
   .composer { padding-left: 16px; }
@@ -440,6 +687,9 @@ body::after {
   .signal-detail { display: none; }
   .topbar-izquierda { gap: 8px; min-width: 0; flex: 1; }
   .model-signal { max-width: 132px; }
+  .topbar-derecha { gap: 6px; }
+  .backlog-btn span:not(.backlog-btn-mas) { display: none; }
+  .backlog-btn { padding: 6px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -545,4 +795,15 @@ body::after {
 
 @media (prefers-reduced-motion: reduce) {
   .mascota, .mascota .palabra, .mascota[data-estado] .palabra { animation: none !important; }
+}
+
+/* Honeypot del formulario de propuestas: invisible para humanos, los bots la
+   completan. La oculta acá (no con style= inline) para que la CSP pueda
+   prohibir estilos inline. */
+.campo-trampa {
+  position: absolute !important;
+  left: -9999px !important;
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0 !important;
 }

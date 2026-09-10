@@ -16,16 +16,36 @@ from pathlib import Path
 from django.conf import settings
 from django.core.cache import cache
 
+from . import docx as docx_
 from . import embeddings, pdf
 from .intents import normalizar
 
 logger = logging.getLogger(__name__)
 
+
+def _carpeta():
+    """De donde salen los documentos de politica.
+
+    Con DOCUMENTOS_FUENTE="drive", primero se sincroniza la carpeta de Google
+    Drive a DRIVE_CACHE_DIR (chat/drive.py, con TTL y lock) y se lee de ahi.
+    Con "local" (por defecto), la carpeta de siempre. La planilla de cuentas
+    NO pasa por aca: chat/cuentas.py siempre usa DOCUMENTOS_DIR local.
+    """
+    if getattr(settings, "DOCUMENTOS_FUENTE", "local") == "drive":
+        from . import drive
+
+        if not drive.configurado():
+            logger.warning("DOCUMENTOS_FUENTE=drive pero falta la configuracion "
+                           "de Drive (carpeta o credenciales): sin documentos.")
+        drive.sincronizar_si_toca(settings.DRIVE_CACHE_DIR)
+        return Path(settings.DRIVE_CACHE_DIR)
+    return Path(settings.DOCUMENTOS_DIR)
+
 # La planilla de cuentas (.xlsx) NO va aca a proposito: trae RUTs y horas
 # contractuales. Se lee estructurada en chat/cuentas.py, que solo toma la
 # cuenta y el RUT como llave de cruce. Agregar ".xlsx" meteria esos datos al
 # corpus de busqueda y podrian aparecer citados en una respuesta.
-EXTENSIONES = (".md", ".txt", ".pdf")
+EXTENSIONES = (".md", ".txt", ".pdf", ".docx")
 IGNORADOS = ("leeme", "readme")  # documentacion del repo, no contenido consultable
 MINIMO_SECCION = 120  # menos que esto es un encabezado, no una respuesta
 
@@ -183,7 +203,7 @@ def _subdividir(seccion):
 
 def cargar(forzar=False):
     """Lee la carpeta de documentos. Cacheada; se invalida al cambiar un archivo."""
-    carpeta = Path(settings.DOCUMENTOS_DIR)
+    carpeta = _carpeta()
     if not carpeta.exists():
         return []
 
@@ -201,8 +221,11 @@ def cargar(forzar=False):
 
     secciones = []
     for archivo in archivos:
-        if archivo.suffix.lower() == ".pdf":
+        sufijo = archivo.suffix.lower()
+        if sufijo == ".pdf":
             texto = pdf.extraer(archivo)
+        elif sufijo == ".docx":
+            texto = docx_.extraer(archivo)
         else:
             try:
                 texto = archivo.read_text(encoding="utf-8")

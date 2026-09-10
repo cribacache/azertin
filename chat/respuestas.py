@@ -17,7 +17,7 @@ from .intents import normalizar
 
 # Subir esto invalida todo lo cacheado. Cambiarlo al modificar como se arman las
 # respuestas, para no servir el formato viejo desde el cache.
-VERSION = "v7"
+VERSION = "v8"
 
 
 def _canonica(mensaje):
@@ -31,16 +31,19 @@ def _canonica(mensaje):
     return " ".join(limpio.split())
 
 
-def clave(mensaje, hoy):
-    firma = f"{VERSION}|{hoy.isoformat()}|{_canonica(mensaje)}"
+def clave(mensaje, hoy, ambito=""):
+    """`ambito` separa el caché por lo que cada rol puede ver: sin él, un
+    ejecutivo recibiría la respuesta completa que se armó para un gerente
+    (ver chat/perfil.py::ambito_cache)."""
+    firma = f"{VERSION}|{ambito}|{hoy.isoformat()}|{_canonica(mensaje)}"
     return "resp:" + hashlib.sha1(firma.encode("utf-8")).hexdigest()
 
 
-def obtener(mensaje, hoy):
-    return cache.get(clave(mensaje, hoy))
+def obtener(mensaje, hoy, ambito=""):
+    return cache.get(clave(mensaje, hoy, ambito))
 
 
-def guardar(mensaje, hoy, respuesta):
+def guardar(mensaje, hoy, respuesta, ambito=""):
     """Guarda solo respuestas definitivas.
 
     Ni "sin_datos" (el modelo dijo que no sabe: puede cambiar si se agrega el
@@ -51,6 +54,6 @@ def guardar(mensaje, hoy, respuesta):
     if not respuesta:
         return
     meta = respuesta.get("meta", {})
-    if meta.get("intencion") in ("sin_datos", "no_disponible"):
+    if meta.get("intencion") in ("sin_datos", "no_disponible", "bloqueada"):
         return
-    cache.set(clave(mensaje, hoy), respuesta, settings.RESPUESTA_CACHE_TTL)
+    cache.set(clave(mensaje, hoy, ambito), respuesta, settings.RESPUESTA_CACHE_TTL)

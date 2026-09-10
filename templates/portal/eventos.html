@@ -1,0 +1,33 @@
+{% extends "portal/base.html" %}
+
+{% block titulo %}Eventos de seguridad{% endblock %}
+{% block encabezado %}Eventos de seguridad{% endblock %}
+{% block subtitulo %}Lo que el sistema bloqueó o limitó. Últimos 200.{% endblock %}
+{% block nav_eventos %}activo{% endblock %}
+
+{% block contenido %}
+  <div class="filtros">
+    <a href="{% url 'portal-eventos' %}" class="{% if not tipo_activo %}activo{% endif %}">Todos</a>
+    {% for valor, etiqueta in tipos %}
+      <a href="?tipo={{ valor }}" class="{% if valor == tipo_activo %}activo{% endif %}">{{ etiqueta }}</a>
+    {% endfor %}
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>Cuándo</th><th>Tipo</th><th>Cuenta</th><th>Detalle</th></tr>
+    </thead>
+    <tbody>
+      {% for e in eventos %}
+        <tr>
+          <td class="tenue">{{ e.creado_en|date:"Y-m-d H:i" }}</td>
+          <td><span class="pill {{ e.tipo }}">{{ e.get_tipo_display }}</span></td>
+          <td>{{ e.email|default:"—" }}</td>
+          <td>{{ e.detalle|default:"" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="tenue">Nada registrado por ahora.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

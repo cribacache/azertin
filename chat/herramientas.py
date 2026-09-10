@@ -5,7 +5,7 @@ estas funciones, que reutilizan la misma capa sanitizada que usa el router de
 reglas. Lo que no pase por aca, el modelo no lo puede ver ni inventar.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 from . import buk, cuentas, documentos, intents, personas
 
@@ -188,16 +188,96 @@ def persona_por_cargo(cargo):
     }
 
 
-def cumpleanos(desde=None, dias=0):
-    """Quien cumple anos en un rango. Solo dia y mes: el anio no se expone."""
-    d = _fecha(desde)
-    gente, _ = buk.cumpleanos(d, max(int(dias or 0), 0), hoy=date.today())
+_ULTIMO_DIA_MES = {1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 6: 30,
+                   7: 31, 8: 30, 9: 30, 10: 31, 11: 30, 12: 31}
+
+
+def _rango_calendario(rango, hoy):
+    """Limites de "hoy"/"esta_semana"/"este_mes" como (desde, dias).
+
+    Calcularlos aca, no dejar que el modelo adivine: una semana es de lunes a
+    domingo, no "7 dias desde hoy", y un mes es del 1 al ultimo dia de ESE
+    mes, no "30 dias desde hoy" (que en la mayoria de los meses se pasa para
+    el mes siguiente, o se queda corto).
+    """
+    if rango == "esta_semana":
+        lunes = hoy - timedelta(days=hoy.weekday())
+        return lunes, 6
+    if rango == "este_mes":
+        primero = hoy.replace(day=1)
+        ultimo_dia = _ULTIMO_DIA_MES[hoy.month]
+        if hoy.month == 2 and hoy.year % 4 == 0 and (hoy.year % 100 != 0 or hoy.year % 400 == 0):
+            ultimo_dia = 29  # bisiesto
+        ultimo = hoy.replace(day=ultimo_dia)
+        return primero, (ultimo - primero).days
+    return hoy, 0  # "hoy" o cualquier otro valor: solo el dia de hoy
+
+
+def cumpleanos(desde=None, dias=0, rango=None):
+    """Quien cumple anos en un rango. Solo dia y mes: el anio no se expone.
+
+    `rango` ("hoy" / "esta_semana" / "este_mes") gana sobre `desde`/`dias`
+    cuando viene: son los pedidos de calendario exacto. `desde`/`dias` quedan
+    para un rango a medida (por ejemplo, ampliado por `cumpleanos_de_persona`
+    para encontrar a alguien puntual).
+    """
+    hoy = date.today()
+    if rango:
+        d, dias_calc = _rango_calendario(rango, hoy)
+    else:
+        d, dias_calc = _fecha(desde, hoy), max(int(dias or 0), 0)
+
+    gente, _ = buk.cumpleanos(d, dias_calc, hoy=hoy)
     return {
         "desde": d.isoformat(),
+        "hasta": (d + timedelta(days=dias_calc)).isoformat(),
         "total": len(gente),
         "personas": [{"nombre": p["nombre"], "cargo": p["cargo"], "area": p["area"],
                       "fecha": p["fecha"], "faltan_dias": p["faltan"]}
                      for p in gente[:MAX_PERSONAS]],
+    }
+
+
+def cumpleanos_de_persona(nombre):
+    """Cuando cumple anos UNA persona. Resuelve el nombre localmente.
+
+    Sin esto, encontrar el cumpleanos de alguien puntual significaba pedirle
+    a `cumpleanos` un rango de 366 dias y buscar el nombre en la respuesta -
+    y esa respuesta viene recortada a MAX_PERSONAS (60): con casi 100
+    personas activas, cualquiera cuyo cumpleanos cayera despues del puesto 60
+    (ordenado por cercania) quedaba fuera del recorte, y el modelo terminaba
+    diciendo que no sabia sobre un dato que BUK si tiene.
+    """
+    directorio, _ = buk.directorio()
+    ids, _ = personas.buscar(nombre or "", directorio)
+
+    if not ids:
+        return {"encontrada": False, "motivo": "No hay nadie con ese nombre en la nomina activa."}
+    if len(ids) > 1:
+        return {
+            "encontrada": False,
+            "motivo": "El nombre coincide con varias personas.",
+            "candidatos": sorted(directorio[i]["nombre"] for i in ids)[:8],
+        }
+
+    pid = next(iter(ids))
+    hoy = date.today()
+    # 366 dias, sin el recorte de `cumpleanos()`: acá se busca a una sola
+    # persona conocida, no una lista para mostrar, así que no hay riesgo de
+    # devolver una respuesta enorme.
+    gente, _ = buk.cumpleanos(hoy, 366, hoy=hoy)
+    encontrada = next((p for p in gente if p["id"] == pid), None)
+    if encontrada is None:
+        return {"encontrada": True, "nombre": directorio[pid]["nombre"],
+                "fecha_conocida": False,
+                "motivo": "No tengo esa fecha registrada en BUK."}
+
+    return {
+        "encontrada": True,
+        "nombre": encontrada["nombre"],
+        "fecha_conocida": True,
+        "fecha": encontrada["fecha"],
+        "faltan_dias": encontrada["faltan"],
     }
 
 
@@ -207,13 +287,113 @@ def dotacion():
     return {"personas_activas": len(directorio)}
 
 
+def quien_esta_trabajando(desde=None, hasta=None, grupo=None):
+    """Quien SI esta en su jornada (lo contrario de listar_ausencias).
+
+    Sin esta herramienta el modelo tendria que restar `listar_ausencias` de
+    `dotacion` el mismo, pero `dotacion` solo da un numero, no nombres: no
+    hay como enumerar a quien SI esta sin esto. Acepta el mismo filtro de
+    grupo que `equipo_de`, para "quien esta trabajando hoy en X".
+    """
+    d1 = _fecha(desde)
+    d2 = _fecha(hasta, d1)
+    directorio, _ = buk.directorio()
+
+    nombre_grupo, base = None, directorio
+    if grupo:
+        cuenta = cuentas.buscar(grupo)
+        if cuenta and "ambiguas" in cuenta:
+            return {"encontrado": False, "motivo": "El nombre coincide con varias cuentas.",
+                    "candidatos": cuenta["ambiguas"]}
+        if cuenta:
+            nombre_grupo = cuenta["nombre"]
+            base = {pid: p for pid, p in directorio.items()
+                    if nombre_grupo in (p.get("cuentas") or [])}
+        else:
+            nombres_area = {p["area"] for p in directorio.values() if p.get("area")}
+            area = intents.detectar_area(intents.normalizar(grupo), nombres_area)
+            if not area:
+                return {"encontrado": False,
+                        "motivo": "No encuentro esa cuenta ni esa area."}
+            nombre_grupo = area
+            base = {pid: p for pid, p in directorio.items() if p.get("area") == area}
+
+    registros, _ = buk.fuera(d1, d2)
+    ausentes_ids = {r["employee_id"] for r in registros if r["employee_id"] in base}
+    presentes = sorted((p for pid, p in base.items() if pid not in ausentes_ids),
+                       key=lambda p: p["nombre"])
+
+    return {
+        "encontrado": True,
+        "grupo": nombre_grupo,
+        "rango": {"desde": d1.isoformat(), "hasta": d2.isoformat()},
+        "total": len(base),
+        "trabajando": len(presentes),
+        "fuera": len(base) - len(presentes),
+        "personas": [{"nombre": p["nombre"], "cargo": p.get("cargo") or ""}
+                     for p in presentes[:MAX_PERSONAS]],
+    }
+
+
+def listar_cuentas():
+    """Nombres de todas las cuentas/clientes que administra Azerta."""
+    nombres = cuentas.nombres()
+    return {"total": len(nombres), "cuentas": nombres}
+
+
+def listar_beneficios():
+    """Beneficios que existen en Azerta (modulo Beneficios de BUK).
+
+    En la practica es "beneficios que alguien ya solicito alguna vez": la API
+    de BUK no tiene forma de listar el catalogo completo, solo de consultar
+    las solicitudes reales y el detalle de cada una por su id.
+    """
+    solicitudes, _ = buk.beneficios()
+    nombres = sorted({s["beneficio"] for s in solicitudes})
+    return {"total": len(nombres), "beneficios": nombres}
+
+
+def beneficios_de_persona(nombre):
+    """Que beneficios ha solicitado una persona, y en que estado esta cada
+    solicitud. Resuelve el nombre localmente, igual que ausencias_de_persona.
+    """
+    directorio, _ = buk.directorio()
+    ids, _ = personas.buscar(nombre or "", directorio)
+
+    if not ids:
+        return {"encontrada": False, "motivo": "No hay nadie con ese nombre en la nomina activa."}
+    if len(ids) > 1:
+        return {
+            "encontrada": False,
+            "motivo": "El nombre coincide con varias personas.",
+            "candidatos": sorted(directorio[i]["nombre"] for i in ids)[:8],
+        }
+
+    pid = next(iter(ids))
+    solicitudes, _ = buk.beneficios()
+    suyas = [s for s in solicitudes if s["employee_id"] == pid]
+    return {
+        "encontrada": True,
+        "nombre": directorio[pid]["nombre"],
+        "total": len(suyas),
+        "beneficios": [{"beneficio": s["beneficio"], "estado": s["estado"],
+                        "solicitado": s["solicitado"]} for s in suyas[:MAX_PERSONAS]],
+    }
+
+
 def buscar_politica(consulta):
     """Busca en los documentos internos (politicas, procedimientos)."""
+    from .antiprompt import NOTA_DOCUMENTO
+
     secciones = documentos.buscar(consulta or "", cuantas=3)
     if not secciones:
         return {"encontrada": False}
     return {
         "encontrada": True,
+        # El texto de un documento es material de referencia, no ordenes para
+        # el modelo: se rotula para que no confunda una frase imperativa del
+        # reglamento con una instruccion dirigida a el.
+        "nota": NOTA_DOCUMENTO,
         "secciones": [
             {"titulo": s["titulo"], "contenido": s["cuerpo"], "fuente": s["origen"]}
             for s in secciones
@@ -228,7 +408,12 @@ FUNCIONES = {
     "equipo_de": equipo_de,
     "persona_por_cargo": persona_por_cargo,
     "cumpleanos": cumpleanos,
+    "cumpleanos_de_persona": cumpleanos_de_persona,
     "dotacion": dotacion,
+    "quien_esta_trabajando": quien_esta_trabajando,
+    "listar_cuentas": listar_cuentas,
+    "listar_beneficios": listar_beneficios,
+    "beneficios_de_persona": beneficios_de_persona,
     "buscar_politica": buscar_politica,
 }
 
@@ -334,17 +519,47 @@ ESQUEMAS = [
         "function": {
             "name": "cumpleanos",
             "description": (
-                "Quien cumple anos. Con dias=0 es solo esa fecha; con dias=30 "
-                "cubre el mes siguiente. Devuelve dia y mes, nunca el anio de "
-                "nacimiento."
+                "Quien cumple años en un dia, semana o mes, SIN nombrar a una "
+                "persona en particular ('quien cumple años esta semana', "
+                "'cumpleaños de octubre'). Para el cumpleaños de alguien "
+                "puntual usa cumpleanos_de_persona en vez de esta. Devuelve "
+                "dia y mes, nunca el año de nacimiento."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "rango": {
+                        "type": "string",
+                        "enum": ["hoy", "esta_semana", "este_mes"],
+                        "description": (
+                            "Preferir esto sobre desde/dias siempre que la "
+                            "pregunta sea 'hoy', 'esta semana' o 'este mes': "
+                            "calcula el rango de calendario exacto (lunes a "
+                            "domingo, 1 al ultimo dia del mes)."
+                        ),
+                    },
                     "desde": _FECHA,
                     "dias": {"type": "integer",
-                             "description": "Cuantos dias hacia adelante incluir."},
+                             "description": ("Cuantos dias hacia adelante incluir desde "
+                                             "`desde`. Solo si no se uso `rango` (por "
+                                             "ejemplo, 'en octubre' con un mes que no es "
+                                             "el actual).")},
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cumpleanos_de_persona",
+            "description": (
+                "Cuando cumple años UNA persona nombrada en la pregunta. "
+                "Resuelve el nombre localmente, igual que ausencias_de_persona."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"nombre": {"type": "string"}},
+                "required": ["nombre"],
             },
         },
     },
@@ -354,6 +569,74 @@ ESQUEMAS = [
             "name": "dotacion",
             "description": "Cantidad de personas activas en la nomina.",
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "quien_esta_trabajando",
+            "description": (
+                "Quien SI esta en su jornada (lo contrario de listar_ausencias), "
+                "opcionalmente filtrado por cuenta o area. Usar para 'quien esta "
+                "trabajando hoy', 'esta todo el equipo', 'quien esta disponible "
+                "en X'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "desde": _FECHA,
+                    "hasta": _FECHA,
+                    "grupo": {"type": "string",
+                             "description": "Cuenta/cliente o area. Omitir para toda la empresa."},
+                },
+                "required": ["desde", "hasta"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "listar_cuentas",
+            "description": (
+                "Nombres de todas las cuentas/clientes que administra Azerta. "
+                "Usar para 'que cuentas tenemos', 'que clientes maneja Azerta'."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "listar_beneficios",
+            "description": (
+                "Nombres de los beneficios que existen en Azerta (modulo "
+                "Beneficios de BUK: dia libre por cumpleanos, permiso por "
+                "mudanza, examenes medicos preventivos, etc). Usar para 'que "
+                "beneficios tiene Azerta', 'que beneficios existen', SIN "
+                "nombrar a una persona. BUK NO entrega en que consiste cada "
+                "uno, solo el nombre: si preguntan el detalle o las "
+                "condiciones de un beneficio y no esta en el contexto de la "
+                "conversacion, dilo (NO_SE) en vez de inventar en que "
+                "consiste a partir del nombre."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "beneficios_de_persona",
+            "description": (
+                "Que beneficios ha solicitado UNA persona y en que estado "
+                "esta cada solicitud (aprobado, en proceso, etc). Usar cuando "
+                "la pregunta nombra a alguien: 'que beneficios tiene X', "
+                "'le aprobaron el dia libre de cumpleanos a X'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"nombre": {"type": "string"}},
+                "required": ["nombre"],
+            },
         },
     },
     {
