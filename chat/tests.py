@@ -1426,16 +1426,65 @@ class ListarCuentasTests(TestCase):
 class PoliticaVacacionesDocTests(TestCase):
     """El documento real debe responder, por texto solo (sin embeddings), a
     las preguntas frecuentes de vacaciones. Si esto se rompe, alguien cambio
-    los titulos del documento o los umbrales de busqueda."""
+    los titulos del documento o los umbrales de busqueda.
+
+    El fixture esta en este archivo, no en `datos/`: desde que
+    DOCUMENTOS_FUENTE=drive es el modo real (los documentos viven en Google
+    Drive, sincronizados a `.drive_cache/`, no en el repo), `datos/` quedo
+    como una carpeta de desarrollo local que puede no existir -y de hecho ya
+    no existe en este checkout. Un test no puede depender de un archivo que
+    nadie versiona.
+    """
+
+    DOCUMENTO = """\
+# Política de Vacaciones
+
+## Cuántos días de vacaciones corresponden
+
+Todo trabajador con más de un año de servicio tiene derecho a 15 días
+hábiles de feriado legal, pagados, con derecho a remuneración íntegra.
+
+## Cómo y con cuánta anticipación se piden las vacaciones
+
+Las solicitudes deben ingresarse con al menos 20 días de anticipación,
+especialmente en períodos de alta demanda. La jefatura directa y la
+gerencia de Personas responden las solicitudes en un plazo de 5 días
+hábiles.
+
+## Qué pasa si me enfermo estando de vacaciones
+
+Si el trabajador se enferma durante su feriado legal y presenta una
+licencia médica, esos días no se descuentan del feriado y se reprograman.
+
+## Incentivo de días adicionales por menor demanda
+
+Quienes tomen vacaciones durante los meses de menor demanda de su área
+reciben días adicionales como incentivo, según el calendario que fija
+cada gerencia.
+
+## Teletrabajo por conciliación de la vida laboral, familiar y personal
+
+Durante las vacaciones escolares de sus hijos, el trabajador puede pactar
+con su jefatura días de teletrabajo para conciliar el cuidado familiar.
+
+## Días administrativos
+
+Cada trabajador dispone de 6 días administrativos al año, de cargo del
+empleador, para trámites personales.
+
+## Feriado especial de Navidad o Año Nuevo
+
+El trabajador puede elegir libremente si trabaja el 24 o el 31 de
+diciembre; el otro día queda liberado.
+"""
 
     def setUp(self):
         cache.clear()
 
     def _con_el_documento_real(self):
-        origen = Path(settings.BASE_DIR) / "datos" / "politica_vacaciones.md"
         carpeta = tempfile.mkdtemp()
         (Path(carpeta) / "politica_vacaciones.md").write_text(
-            origen.read_text(encoding="utf-8"), encoding="utf-8")
+            self.DOCUMENTO, encoding="utf-8")
         return override_settings(DOCUMENTOS_DIR=carpeta, EMBEDDINGS_ACTIVOS=False)
 
     def test_preguntas_frecuentes_encuentran_seccion(self):
@@ -1469,12 +1518,15 @@ class PoliticaVacacionesDocTests(TestCase):
                 self.assertIn(titulo, titulos, f"{pregunta!r} -> {titulos}")
 
     def test_no_quedan_datos_personales_de_la_firma(self):
-        """El .txt original traia el email y RUT de quien firmo el documento:
-        no deben terminar citables en una respuesta del bot."""
-        origen = Path(settings.BASE_DIR) / "datos" / "politica_vacaciones.md"
-        contenido = origen.read_text(encoding="utf-8").lower()
+        """Guarda de contenido: un documento real que se use como fixture aca
+        (o que se suba a la carpeta de Drive) no debe traer el email ni el
+        RUT de quien lo firmo. chat/drive.py NO escanea PII en PDFs/.docx
+        (solo antiprompt.riesgo, que busca inyeccion, no datos personales),
+        asi que la unica barrera hoy es no subir el original sin editar."""
+        contenido = self.DOCUMENTO.lower()
         self.assertNotIn("@gmail.com", contenido)
-        self.assertNotIn("12.454.685-0", contenido)
+        self.assertNotIn("@azerta.cl", contenido)
+        self.assertNotRegex(contenido, r"\d{1,2}\.\d{3}\.\d{3}-[\dk]")
 
 
 class MarcaNoSeTests(TestCase):

@@ -351,7 +351,11 @@ BUK_TIMEOUT = int(os.getenv("BUK_TIMEOUT", "10"))
 BUK_PAGE_SIZE = int(os.getenv("BUK_PAGE_SIZE", "100"))
 BUK_DIRECTORY_PAGE_SIZE = int(os.getenv("BUK_DIRECTORY_PAGE_SIZE", "200"))
 BUK_CACHE_TTL = int(os.getenv("BUK_CACHE_TTL", "600"))
-BUK_ABSENCE_CACHE_TTL = int(os.getenv("BUK_ABSENCE_CACHE_TTL", "60"))
+# 60s hacia el pasado tenia el efecto practico de casi no cachear: la pregunta
+# mas comun ("quien esta fuera hoy") volvia a pegarle a BUK en vivo apenas
+# pasaba un minuto. Vacaciones/licencias no cambian de un minuto a otro, asi
+# que se alinea con BUK_CACHE_TTL en vez de tener una ventana casi nula.
+BUK_ABSENCE_CACHE_TTL = int(os.getenv("BUK_ABSENCE_CACHE_TTL", "300"))
 
 # /vacations no filtra por rango: su parametro `date` devuelve las que empiezan
 # desde esa fecha. Se pide con este margen hacia atras para no perder ninguna en

@@ -468,7 +468,10 @@ ESQUEMAS = [
             "description": (
                 "Quienes no estan en su jornada en un rango de fechas: vacaciones, "
                 "licencias medicas, permisos e inasistencias. Para un solo dia, usar "
-                "la misma fecha en desde y hasta."
+                "la misma fecha en desde y hasta. Si la pregunta nombra a UNA persona "
+                "en particular ('¿Maria esta de vacaciones?'), usa ausencias_de_persona "
+                "en vez de esta: no listes a todo el equipo para responder sobre una "
+                "sola persona."
             ),
             "parameters": {
                 "type": "object",
@@ -490,8 +493,11 @@ ESQUEMAS = [
         "function": {
             "name": "ausencias_de_persona",
             "description": (
-                "Situacion de UNA persona. Usar cuando la pregunta nombra a alguien. "
-                "Acepta nombre, apellido o ambos."
+                "Disponibilidad de UNA persona nombrada: si esta de vacaciones, con "
+                "licencia, con permiso o ausente, y en que fechas. Acepta nombre, "
+                "apellido o ambos. Si la pregunta es sobre su identidad ('quien es'), "
+                "cargo, area o las cuentas/clientes que atiende, usa info_persona en "
+                "vez de esta: esta herramienta NO trae esos datos."
             ),
             "parameters": {
                 "type": "object",
@@ -594,8 +600,11 @@ ESQUEMAS = [
         "function": {
             "name": "cumpleanos_de_persona",
             "description": (
-                "Cuando cumple años UNA persona nombrada en la pregunta. "
-                "Resuelve el nombre localmente, igual que ausencias_de_persona."
+                "Cuando cumple años UNA persona nombrada en la pregunta ('¿cuando "
+                "cumple años X?'). Resuelve el nombre localmente, igual que "
+                "ausencias_de_persona. No la uses para preguntas de disponibilidad "
+                "de esa persona (vacaciones, licencias): esas van con "
+                "ausencias_de_persona, no con esta."
             ),
             "parameters": {
                 "type": "object",
