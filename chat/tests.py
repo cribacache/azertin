@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import requests
 from django.conf import settings
 from django.core.cache import cache
 from django.test import Client, TestCase as _DjangoTestCase, override_settings
@@ -2656,3 +2657,69 @@ class CacheControlTests(TestCase):
     def test_respuesta_del_chat_no_es_cacheable(self):
         resp = self.client.post("/api/chat/", data="{}", content_type="application/json")
         self.assertIn("no-store", resp.headers.get("Cache-Control", ""))
+
+
+class FotosEquipoTests(TestCase):
+    """chat/fotos_equipo.py: lee azerta.cl/equipo (HTML publico, sin API) y
+    matchea por nombre para conseguir la foto de una persona."""
+
+    HTML = """
+    <html><body>
+    <img alt="Cristina Bitar" src="https://azerta.cl/wp-content/uploads/2026/01/Cristina-Bitar.png">
+    <img alt="Felipe Edwards" src="https://azerta.cl/wp-content/uploads/2026/01/equipo-chile-felipe-edwards.png">
+    <img src="https://azerta.cl/wp-content/uploads/2026/01/footer-logo-fti.png" alt="FTI">
+    <img alt="Icono decorativo sin foto" src="https://azerta.cl/assets/icon.svg">
+    </body></html>
+    """
+
+    def setUp(self):
+        cache.clear()
+
+    @patch("chat.fotos_equipo.requests.get")
+    def test_extrae_y_matchea_por_nombre_exacto(self, mock_get):
+        from chat import fotos_equipo
+        mock_get.return_value = Mock(status_code=200, text=self.HTML,
+                                     raise_for_status=lambda: None)
+        url = fotos_equipo.url_de("Cristina Bitar")
+        self.assertEqual(url, "https://azerta.cl/wp-content/uploads/2026/01/Cristina-Bitar.png")
+
+    @patch("chat.fotos_equipo.requests.get")
+    def test_matchea_con_nombre_completo_de_buk(self, mock_get):
+        """BUK trae nombre y ambos apellidos; la web a veces solo un apellido."""
+        from chat import fotos_equipo
+        mock_get.return_value = Mock(status_code=200, text=self.HTML,
+                                     raise_for_status=lambda: None)
+        url = fotos_equipo.url_de("Felipe Edwards Marin")
+        self.assertEqual(url, "https://azerta.cl/wp-content/uploads/2026/01/equipo-chile-felipe-edwards.png")
+
+    @patch("chat.fotos_equipo.requests.get")
+    def test_persona_no_listada_devuelve_none(self, mock_get):
+        from chat import fotos_equipo
+        mock_get.return_value = Mock(status_code=200, text=self.HTML,
+                                     raise_for_status=lambda: None)
+        self.assertIsNone(fotos_equipo.url_de("Nadie Existe Aca"))
+
+    @patch("chat.fotos_equipo.requests.get")
+    def test_ignora_imagenes_sin_extension_de_foto(self, mock_get):
+        """Un <img> sin .png/.jpg/.jpeg (iconos svg, etc.) no entra al mapa.
+        Los logos del footer si quedan (mismo alt/src que una persona real,
+        no hay forma de distinguirlos sin la estructura del DOM), pero no es
+        un problema real: nadie va a buscar a alguien llamado "FTI"."""
+        from chat import fotos_equipo
+        mock_get.return_value = Mock(status_code=200, text=self.HTML,
+                                     raise_for_status=lambda: None)
+        self.assertIsNone(fotos_equipo.url_de("Icono decorativo sin foto"))
+
+    @patch("chat.fotos_equipo.requests.get")
+    def test_cachea_y_no_vuelve_a_pedir_la_pagina(self, mock_get):
+        from chat import fotos_equipo
+        mock_get.return_value = Mock(status_code=200, text=self.HTML,
+                                     raise_for_status=lambda: None)
+        fotos_equipo.url_de("Cristina Bitar")
+        fotos_equipo.url_de("Felipe Edwards")
+        mock_get.assert_called_once()
+
+    @patch("chat.fotos_equipo.requests.get", side_effect=requests.ConnectionError("caido"))
+    def test_pagina_caida_no_rompe_nada(self, mock_get):
+        from chat import fotos_equipo
+        self.assertIsNone(fotos_equipo.url_de("Cristina Bitar"))
