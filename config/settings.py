@@ -173,6 +173,17 @@ if not DEBUG:
         "DJANGO_HSTS_SUBDOMAINS", "False").lower() == "true"
     SECURE_HSTS_PRELOAD = os.getenv("DJANGO_HSTS_PRELOAD", "False").lower() == "true"
 
+# Por defecto, Django con DEBUG=False solo manda los errores 500 por correo a
+# ADMINS (sin configurar acá): sin esto, un error en produccion no queda en
+# ningun lado. Cloud Run ya captura stdout/stderr como logs, asi que alcanza
+# con mandarlos ahi.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {"django": {"handlers": ["console"], "level": "INFO"}},
+}
+
 # Rate limit del login del admin (chat/middleware.py::AdminBruteForceMiddleware).
 RATE_LIMIT_ADMIN_LOGIN = os.getenv("RATE_LIMIT_ADMIN_LOGIN", "10/300")
 

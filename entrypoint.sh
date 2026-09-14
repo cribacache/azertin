@@ -7,6 +7,11 @@ set -e
 # Job aparte en vez de correrlo en cada arranque de contenedor.
 python manage.py migrate --noinput
 
+# La tabla de CACHES (DatabaseCache, config/settings.py) no la crea `migrate`:
+# necesita este comando aparte. Falla si la tabla ya existe, por eso el
+# `|| true` -no hay forma nativa de pedirle "si no existe" a este comando.
+python manage.py createcachetable || true
+
 exec gunicorn config.wsgi:application \
     --bind 0.0.0.0:${PORT:-8080} \
     --workers 3 --threads 2 --timeout 60
