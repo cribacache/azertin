@@ -28,8 +28,10 @@ def _carpeta():
 
     Con DOCUMENTOS_FUENTE="drive", primero se sincroniza la carpeta de Google
     Drive a DRIVE_CACHE_DIR (chat/drive.py, con TTL y lock) y se lee de ahi.
-    Con "local" (por defecto), la carpeta de siempre. La planilla de cuentas
-    NO pasa por aca: chat/cuentas.py siempre usa DOCUMENTOS_DIR local.
+    Con "local" (por defecto), la carpeta de siempre. Ni la planilla de
+    cuentas ni la de turnos pasan por aca en ningun modo: chat/cuentas.py y
+    chat/turnos.py tienen su propia _carpeta() y leen su archivo aparte,
+    estructurado por columna en vez de como texto libre.
     """
     if getattr(settings, "DOCUMENTOS_FUENTE", "local") == "drive":
         from . import drive

@@ -8,22 +8,34 @@ Acceso: una **cuenta de servicio** con scope `drive.readonly`. La carpeta se
 comparte con el email de esa cuenta. No se pide permiso de escritura ni acceso
 a todo Drive: la cuenta solo ve lo que le compartieron.
 
-Tipos que entran al corpus:
-  - Google Docs nativos  -> se exportan a Markdown.
+Tipos que se sincronizan (no es lo mismo que "entran al corpus de texto libre
+de chat/documentos.py": ver la salvedad de tablas mas abajo):
+  - Google Docs nativos -> se exportan a Markdown.
   - Google Sheets nativas -> SOLO si el nombre esta en settings.DRIVE_HOJAS_PERMITIDAS
-    (ver mas abajo), se exportan a CSV. Por defecto ninguna hoja entra: la
+    (ver mas abajo), se exportan a CSV -y el exportador de Sheets entrega
+    nada mas que la primera pestaña visible; si alguien agrega una segunda no
+    se baja (para leer todas las pestañas hay que habilitar la API de Sheets,
+    hoy apagada en el proyecto de GCP, y usar spreadsheets.values.get).
+  - .xlsx subido tal cual (no convertido a Sheets) -> incluido en la MISMA
+    lista DRIVE_HOJAS_PERMITIDAS (comparando el nombre sin extension), se baja
+    el archivo completo tal cual, sin pasar por el exportador de Sheets y su
+    limite de una sola pestaña.
+    Por defecto ninguna hoja ni xlsx entra por ninguna de las dos vias: la
     carpeta "bases para Iris" tambien tiene hojas con RUT, telefono, email y
     cumpleanos de cada persona (la base de BUK y las vacaciones, ambas
     exportadas del BUK original) y esas jamas deben quedar citables en una
-    respuesta del chat. Cada hoja que se agrega a la lista es una decision
-    explicita, no un default.
-    OJO ademas: el endpoint de exportacion de Drive solo entrega la primera
-    hoja visible del archivo; si alguien agrega una segunda pestaña no se
-    baja (para leer todas las pestañas hay que habilitar la API de Sheets,
-    hoy apagada en el proyecto de GCP, y usar spreadsheets.values.get).
+    respuesta del chat. Cada nombre que se agrega a la lista es una decision
+    explicita, no un default -incluye "Turnos Tanica y Digital" (Sheet nativa,
+    chat/turnos.py) y "Personas Hrs Sem x Cuenta" (.xlsx subido, chat/cuentas.py):
+    esta ultima SI tiene RUT, pero se lee estructurada por columna y el RUT
+    nunca se guarda ni sale en una respuesta.
   - PDF / .txt / .md / .docx subidos -> se bajan tal cual.
-  - Slides, .xlsx, Sheets no listadas y todo lo demas -> se omiten (la
-    planilla de cuentas con RUTs se sigue leyendo local, nunca de aca).
+  - Slides, Sheets/.xlsx no listadas y todo lo demas -> se omiten.
+
+El .csv exportado y el .xlsx bajado de una hoja permitida nunca entran al
+corpus de texto libre de chat/documentos.py -son una tabla de una fila por
+persona, no prosa- se leen estructurados en chat/turnos.py y chat/cuentas.py
+respectivamente.
 
 Las subcarpetas "Papelero"/"Papelera" se saltan enteras (recursivo tambien):
 es donde el equipo deja archivos viejos o duplicados sin borrarlos del todo,
@@ -54,6 +66,12 @@ BASE = "https://www.googleapis.com/drive/v3"
 MIME_FOLDER = "application/vnd.google-apps.folder"
 MIME_DOC = "application/vnd.google-apps.document"
 MIME_SHEET = "application/vnd.google-apps.spreadsheet"
+# Un .xlsx subido tal cual a Drive (no convertido a Google Sheets) tiene este
+# mimeType, distinto del de una Sheet nativa. Ver _contenido: se acepta con
+# el mismo criterio de lista explicita que una Sheet, pero bajando el archivo
+# real en vez de exportarlo -el exportador de Sheets solo entrega la primera
+# pestaña, y chat/cuentas.py necesita el archivo completo.
+MIME_XLSX_SUBIDO = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 # Extensiones binarias que el pipeline de documentos entiende.
 BINARIAS_OK = {".pdf", ".txt", ".md", ".markdown", ".docx", ".csv"}
@@ -184,6 +202,14 @@ def _contenido(archivo):
             return None  # no esta en la lista explicita: puede traer PII
         return _get(f"/files/{archivo['id']}/export",
                     {"mimeType": "text/csv"}, binario=True), ".csv"
+
+    if mime == MIME_XLSX_SUBIDO:
+        # Mismo criterio explicito que una Sheet nativa (arriba), comparando
+        # el nombre sin la extension ni espacios de mas.
+        if Path(nombre).stem.strip() not in settings.DRIVE_HOJAS_PERMITIDAS:
+            return None
+        return _get(f"/files/{archivo['id']}",
+                    {"alt": "media", "supportsAllDrives": "true"}, binario=True), ".xlsx"
 
     if mime.startswith("application/vnd.google-apps"):
         return None  # Slides, formularios, etc.

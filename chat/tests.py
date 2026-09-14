@@ -1024,6 +1024,59 @@ class CuentasTests(TestCase):
         self.assertNotIn("111111111", crudo)
 
 
+@SIN_DOCUMENTOS
+class CuentasDesdeDriveTests(TestCase):
+    """Con DOCUMENTOS_FUENTE=drive, la planilla sigue siendo el mismo .xlsx de
+    siempre (chat/drive.py la baja tal cual, no via el exportador de Sheets:
+    ver MIME_XLSX_SUBIDO), solo que sincronizada a DRIVE_CACHE_DIR."""
+
+    def setUp(self):
+        cache.clear()
+        self.dir = Path(tempfile.mkdtemp())
+
+    def _xlsx(self, nombre, filas):
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Detalle Cuenta-Persona"
+        ws.append(["Detalle Unipersonal"]); ws.append([])
+        ws.append(["Cuenta / Cliente", "Persona", "Hrs. X Semana", "Rut", "Apodo"])
+        for f in filas:
+            ws.append(f)
+        wb.save(self.dir / nombre)
+
+    @patch("chat.drive.sincronizar_si_toca")
+    def test_lee_el_xlsx_de_drive_y_agrupa_por_cuenta(self, mock_sync):
+        from chat import cuentas
+        self._xlsx("Personas Hrs Sem x Cuenta.xlsx", [
+            ["CENCOSUD", "Rojas Ana", None, "11.111.111-1", "Ana"],
+            ["CENCOSUD", "Soto Luis", None, "22.222.222-2", "Lucho"],
+            ["BHP", "Rojas Ana", None, "11.111.111-1", "Ana"],
+        ])
+        with override_settings(DOCUMENTOS_FUENTE="drive", DRIVE_CACHE_DIR=self.dir):
+            self.assertEqual(cuentas.nombres(), ["BHP", "CENCOSUD"])
+            self.assertEqual(len(cuentas.buscar("vacaciones en cencosud")["ruts"]), 2)
+        mock_sync.assert_called()
+
+    @patch("chat.drive.sincronizar_si_toca")
+    def test_no_confunde_el_xlsx_de_cuentas_con_el_csv_de_turnos(self, _sync):
+        """Con las dos planillas sincronizadas a la vez, cada modulo debe
+        encontrar la suya por nombre, no "el primer archivo de la carpeta"."""
+        from chat import cuentas, turnos
+        (self.dir / "Turnos Tanica y Digital.csv").write_text(
+            "Digital\n"
+            "Nombre,Cargo,Forma de trabajo,Modalidad,N° puesto,Observacion\n"
+            "Rojas Ana,Ejecutiva,Turno 1,Hibrido,12,\n",
+            encoding="utf-8",
+        )
+        self._xlsx("Personas Hrs Sem x Cuenta.xlsx", [
+            ["CENCOSUD", "Rojas Ana", None, "11.111.111-1", "Ana"],
+        ])
+        with override_settings(DOCUMENTOS_FUENTE="drive", DRIVE_CACHE_DIR=self.dir):
+            self.assertEqual(cuentas.nombres(), ["CENCOSUD"])
+            self.assertEqual(turnos.buscar("Rojas Ana")["cargo"], "Ejecutiva")
+
+
 class CuentaPorTokenTests(TestCase):
     """"El equipo de Santander" debe encontrar "BANCO SANTANDER"."""
 
@@ -2333,6 +2386,30 @@ class DriveSyncTests(_DjangoTestCase):
             contenido = drive._contenido({
                 "id": "a3", "name": "Turnos  ", "mimeType": drive.MIME_SHEET})
         self.assertEqual(contenido, (b"x", ".csv"))
+
+    @patch("chat.drive._get")
+    def test_un_xlsx_subido_en_la_lista_permitida_se_baja_completo(self, _get):
+        """A diferencia de una Sheet nativa, un .xlsx subido tal cual (ej. la
+        planilla de cuentas) se baja entero via /files/{id}, no exportado -el
+        exportador de Sheets no aplica a un archivo que nunca fue convertido."""
+        from chat import drive
+        _get.return_value = b"bytes-del-xlsx"
+        with override_settings(DRIVE_HOJAS_PERMITIDAS={"Personas Hrs Sem x Cuenta"}):
+            contenido = drive._contenido({
+                "id": "x1", "name": "Personas Hrs Sem x Cuenta.xlsx",
+                "mimeType": drive.MIME_XLSX_SUBIDO})
+        self.assertEqual(contenido, (b"bytes-del-xlsx", ".xlsx"))
+        _get.assert_called_once_with(
+            "/files/x1", {"alt": "media", "supportsAllDrives": "true"}, binario=True)
+
+    @patch("chat.drive._get")
+    def test_un_xlsx_subido_fuera_de_la_lista_se_omite(self, _get):
+        from chat import drive
+        with override_settings(DRIVE_HOJAS_PERMITIDAS=set()):
+            contenido = drive._contenido({
+                "id": "x2", "name": "Sueldos.xlsx", "mimeType": drive.MIME_XLSX_SUBIDO})
+        self.assertIsNone(contenido)
+        _get.assert_not_called()
 
     @patch("chat.drive._get")
     def test_la_carpeta_papelero_se_salta_entera(self, _get):

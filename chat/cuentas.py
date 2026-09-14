@@ -6,6 +6,16 @@ empleados, asi que la planilla es la unica fuente. Se cruza con BUK por RUT.
 El RUT se usa solo como llave: no se guarda en el directorio ni sale en ninguna
 respuesta. De la planilla tampoco se leen las horas por semana, que son
 informacion contractual y nadie pregunta por ellas en el chat.
+
+Con DOCUMENTOS_FUENTE="drive", la planilla vive en Drive como el mismo .xlsx
+de siempre (subido tal cual, no una Google Sheet nativa) y chat/drive.py la
+baja completa -no via el exportador de Sheets, que solo entrega la primera
+pestaña- porque su nombre esta en settings.DRIVE_HOJAS_PERMITIDAS: no es un
+default, es una decision explicita, igual que "Turnos Tanica y Digital" para
+chat/turnos.py. Con "local" (o sin Drive configurado), se sigue leyendo un
+.xlsx de DOCUMENTOS_DIR: sirve para desarrollar sin credenciales de Drive, y
+es lo que usa toda la suite de tests de este modulo. El archivo es identico
+en ambos casos, solo cambia de donde sale.
 """
 
 import logging
@@ -22,6 +32,11 @@ HOJA = "Detalle Cuenta-Persona"
 COL_CUENTA, COL_PERSONA, COL_RUT = 0, 1, 3
 PRIMERA_FILA = 4  # las tres primeras son titulo y encabezado
 
+# Nombre tal cual lo deja chat/drive.py al sincronizar el .xlsx desde Drive
+# (ver drive._nombre_local). El glob con "*" tolera el sufijo "-<id>" que se
+# agrega solo si hubiera un choque de nombres.
+NOMBRE_EN_DRIVE = "Personas Hrs Sem x Cuenta"
+
 
 def normalizar_rut(valor):
     return str(valor or "").replace(".", "").replace("-", "").strip().lower()
@@ -34,11 +49,26 @@ def _clave(texto):
     return re.sub(r"[^a-z0-9]+", " ", plano).strip()
 
 
+def _usa_drive():
+    return getattr(settings, "DOCUMENTOS_FUENTE", "local") == "drive"
+
+
+def _carpeta():
+    """Misma logica que chat/documentos.py y chat/turnos.py."""
+    if _usa_drive():
+        from . import drive
+
+        drive.sincronizar_si_toca(settings.DRIVE_CACHE_DIR)
+        return Path(settings.DRIVE_CACHE_DIR)
+    return Path(settings.DOCUMENTOS_DIR)
+
+
 def archivo():
-    carpeta = Path(settings.DOCUMENTOS_DIR)
+    carpeta = _carpeta()
     if not carpeta.exists():
         return None
-    hallazgos = sorted(carpeta.glob("*.xlsx"))
+    patron = f"{NOMBRE_EN_DRIVE}*.xlsx" if _usa_drive() else "*.xlsx"
+    hallazgos = sorted(carpeta.glob(patron))
     return hallazgos[0] if hallazgos else None
 
 

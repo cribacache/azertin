@@ -49,11 +49,19 @@ def _carpeta():
     return Path(settings.DOCUMENTOS_DIR)
 
 
+NOMBRE_EN_DRIVE = "Turnos Tanica y Digital"
+
+
 def archivo():
     carpeta = _carpeta()
     if not carpeta.exists():
         return None
-    hallazgos = sorted(carpeta.glob("*.csv"))
+    if getattr(settings, "DOCUMENTOS_FUENTE", "local") == "drive":
+        # Con mas de una Sheet permitida sincronizada (ver chat/cuentas.py),
+        # "el primer .csv" ya no alcanza para identificar esta planilla.
+        hallazgos = sorted(carpeta.glob(f"{NOMBRE_EN_DRIVE}*.csv"))
+    else:
+        hallazgos = sorted(carpeta.glob("*.csv"))
     return hallazgos[0] if hallazgos else None
 
 
