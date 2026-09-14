@@ -421,6 +421,23 @@ def turno_de_persona(nombre):
     }
 
 
+def listar_turnos(modalidad=None, forma_trabajo=None, area=None):
+    """Personas que matchean un turno/modalidad/area, sin nombrar a nadie.
+
+    Al reves de turno_de_persona: aca se pregunta por el grupo, no por
+    alguien puntual. Mismos filtros que ofrece la planilla (chat/turnos.py).
+    """
+    filas = turnos.listar(modalidad=modalidad, forma_trabajo=forma_trabajo, area=area)
+    return {
+        "total": len(filas),
+        "personas": [
+            {"nombre": f["nombre"], "cargo": f["cargo"], "area": f["area"],
+             "forma_trabajo": f["forma_trabajo"], "modalidad": f["modalidad"]}
+            for f in sorted(filas, key=lambda f: f["nombre"])
+        ],
+    }
+
+
 def buscar_politica(consulta):
     """Busca en los documentos internos (politicas, procedimientos)."""
     from .antiprompt import NOTA_DOCUMENTO
@@ -455,6 +472,7 @@ FUNCIONES = {
     "listar_beneficios": listar_beneficios,
     "beneficios_de_persona": beneficios_de_persona,
     "turno_de_persona": turno_de_persona,
+    "listar_turnos": listar_turnos,
     "buscar_politica": buscar_politica,
 }
 
@@ -703,6 +721,31 @@ ESQUEMAS = [
                 "type": "object",
                 "properties": {"nombre": {"type": "string"}},
                 "required": ["nombre"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "listar_turnos",
+            "description": (
+                "Quienes tienen un turno, modalidad o forma de trabajo "
+                "determinada, SIN nombrar a una persona en particular: 'quien "
+                "tiene turno presencial', 'quien es hibrido', 'quien esta en "
+                "turno 1 en Digital'. Si la pregunta nombra a alguien, usa "
+                "turno_de_persona en vez de esta: es al reves, aca se "
+                "pregunta por el grupo."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "modalidad": {"type": "string",
+                                 "description": "Ej. presencial, hibrido. Omitir para no filtrar."},
+                    "forma_trabajo": {"type": "string",
+                                     "description": "Ej. permanente, turno 1, turno 2. Omitir para no filtrar."},
+                    "area": {"type": "string",
+                            "description": "Area/equipo de la planilla de turnos. Omitir para toda la empresa."},
+                },
             },
         },
     },

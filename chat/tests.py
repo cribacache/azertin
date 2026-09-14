@@ -1204,6 +1204,30 @@ class TurnosTests(TestCase):
         with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
             self.assertIsNone(turnos.buscar("Nadie Existe"))
 
+    def test_listar_filtra_por_modalidad(self):
+        from chat import turnos
+        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
+            filas = turnos.listar(modalidad="hibrido")
+        self.assertEqual({f["nombre"] for f in filas}, {"Juan Soto", "Luis  Perez"})
+
+    def test_listar_combina_filtros(self):
+        from chat import turnos
+        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
+            filas = turnos.listar(modalidad="hibrido", area="digital")
+        self.assertEqual([f["nombre"] for f in filas], ["Luis  Perez"])
+
+    def test_listar_sin_filtros_devuelve_todo(self):
+        from chat import turnos
+        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
+            self.assertEqual(len(turnos.listar()), 3)
+
+    def test_herramienta_listar_turnos_arma_la_salida(self):
+        from chat import herramientas
+        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
+            resultado = herramientas.listar_turnos(modalidad="presencial")
+        self.assertEqual(resultado["total"], 1)
+        self.assertEqual(resultado["personas"][0]["nombre"], "Ana Rojas")
+
     @patch("chat.buk.requests.get", side_effect=fake_get)
     def test_turno_de_persona_resuelve_el_nombre_via_buk(self, mocked):
         from chat import herramientas
@@ -1962,6 +1986,29 @@ class AutorizacionTests(TestCase):
         self.assertEqual(nombres, {"Eva Prensa", "Ema Digital"})
         self.assertEqual(salida["total"], 2)
         self.assertTrue(salida["alcance_limitado"])
+
+    @patch("chat.autorizacion.buk.directorio", return_value=(DIRECTORIO_FAM, 0))
+    def test_listar_turnos_se_filtra_a_los_pares(self, _dir):
+        """listar_turnos y turno_de_persona quedaron sin clasificar en la
+        matriz cuando se agregaron (denegadas para todo el que no sea
+        gerencia): sin esto, ningun ejecutivo podia usarlas."""
+        from chat import autorizacion
+        crudo = {
+            "personas": [{"nombre": "Eva Prensa"}, {"nombre": "Gina Personas"},
+                         {"nombre": "Ema Digital"}],
+            "total": 3,
+        }
+        salida = autorizacion.ejecutar(_ctx(), "listar_turnos", {}, lambda: crudo)
+        nombres = {p["nombre"] for p in salida["personas"]}
+        self.assertEqual(nombres, {"Eva Prensa", "Ema Digital"})
+        self.assertEqual(salida["total"], 2)
+
+    @patch("chat.autorizacion.buk.directorio", return_value=(DIRECTORIO_FAM, 0))
+    def test_turno_de_persona_permitido_para_un_par(self, _dir):
+        from chat import autorizacion
+        salida = autorizacion.ejecutar(_ctx(), "turno_de_persona",
+                                       {"nombre": "Ema"}, lambda: {"ok": "par"})
+        self.assertEqual(salida, {"ok": "par"})
 
     @patch("chat.autorizacion.buk.directorio", return_value=(DIRECTORIO_FAM, 0))
     def test_info_general_es_libre(self, _dir):

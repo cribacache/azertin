@@ -28,7 +28,7 @@ from .models import EventoSeguridad, PerfilUsuario, registrar_evento
 logger = logging.getLogger(__name__)
 
 # Herramientas que devuelven una lista de personas: se filtran a la jerarquía.
-TOOLS_LISTADO = {"listar_ausencias", "quien_esta_trabajando", "equipo_de"}
+TOOLS_LISTADO = {"listar_ausencias", "quien_esta_trabajando", "equipo_de", "listar_turnos"}
 # Herramientas que hablan de UNA persona nombrada: se niegan si está fuera de
 # alcance, con aviso explícito (decisión del proyecto).
 TOOLS_PERSONA = {"info_persona", "ausencias_de_persona", "cumpleanos_de_persona",
@@ -55,6 +55,8 @@ MATRIZ_EJECUTIVO = {
     "ausencias_de_persona": PARES,
     "cumpleanos_de_persona": PARES,
     "persona_por_cargo": PARES,
+    "turno_de_persona": PARES,
+    "listar_turnos": PARES,
     # Los beneficios son más sensibles que la disponibilidad: solo los propios.
     "beneficios_de_persona": PROPIO,
 }

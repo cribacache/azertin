@@ -137,3 +137,21 @@ def buscar(nombre):
         if puntaje > mejor_puntaje:
             mejor, mejor_puntaje = fila, puntaje
     return mejor
+
+
+def _coincide(valor, filtro):
+    """Comparacion sin tildes/mayusculas; el filtro matchea si es substring
+    del valor ("hibrido" matchea "Hibrido", "turno" matchea "Turno 1")."""
+    if not filtro:
+        return True
+    return _clave(filtro) in _clave(valor)
+
+
+def listar(modalidad=None, forma_trabajo=None, area=None):
+    """Filas que matchean TODOS los filtros dados (los que se omiten no filtran)."""
+    return [
+        fila for fila in cargar()
+        if _coincide(fila["modalidad"], modalidad)
+        and _coincide(fila["forma_trabajo"], forma_trabajo)
+        and _coincide(fila["area"], area)
+    ]
