@@ -754,8 +754,12 @@ ESQUEMAS = [
         "function": {
             "name": "buscar_politica",
             "description": (
-                "Busca en los documentos internos de la empresa (politicas, "
-                "procedimientos, reglamento). Usar para preguntas de como se hace algo."
+                "Busca en los documentos internos de la empresa: politicas, "
+                "procedimientos, reglamento, y tambien comunicados, noticias o "
+                "publicaciones internas. Usar para preguntas de como se hace "
+                "algo, y para 'que se comunico/publico sobre X', 'hay alguna "
+                "noticia de Y'. No lista publicaciones por fecha sin tema: es "
+                "busqueda por contenido, no un calendario."
             ),
             "parameters": {
                 "type": "object",
