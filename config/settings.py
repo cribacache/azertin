@@ -111,6 +111,10 @@ DRIVE_DOC_ANTIPROMPT_UMBRAL = int(os.getenv("DRIVE_DOC_ANTIPROMPT_UMBRAL", "2"))
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Sirve /static/ directamente desde gunicorn (Cloud Run no tiene un CDN
+    # propio delante). Va justo despues de SecurityMiddleware, como pide
+    # whitenoise, y antes que cualquier otro middleware.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     # Cabeceras de seguridad que Django no pone solo: CSP, Permissions-Policy,
     # Cross-Origin-Resource-Policy. Arriba del todo para que alcancen tambien
     # a las respuestas de error y a los redirect de login.
@@ -189,23 +193,43 @@ TEMPLATES = [
 ]
 WSGI_APPLICATION = "config.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
-        "OPTIONS": {
-            # WAL: los lectores no esperan a que termine una escritura (el modo
-            # por defecto de SQLite bloquea todo el archivo mientras alguien
-            # escribe). Con varias personas preguntando a la vez, sin esto cada
-            # `registrar()`/`contar()` podria demorar a los demas.
-            "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;",
-            # Toma el lock de escritura al abrir la transaccion, no a mitad de
-            # camino: evita el "database is locked" que da el modo por defecto
-            # cuando dos escrituras casi se cruzan.
-            "transaction_mode": "IMMEDIATE",
-        },
+# DB_HOST presente -> Postgres (Cloud SQL en produccion). Sin esa variable
+# -> SQLite local, como siempre (no rompe el flujo de desarrollo de nadie).
+#
+# En Cloud Run, DB_HOST es el socket unix que monta la plataforma:
+#   /cloudsql/<PROJECT>:<REGION>:<INSTANCE>
+# y DB_PORT queda vacio (Postgres por socket unix no usa puerto TCP).
+_db_host = os.getenv("DB_HOST", "").strip()
+if _db_host:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.getenv("DB_NAME", "iris"),
+            "USER": os.getenv("DB_USER", "iris"),
+            "PASSWORD": os.getenv("DB_PASSWORD", ""),
+            "HOST": _db_host,
+            "PORT": os.getenv("DB_PORT", ""),
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+            "OPTIONS": {
+                # WAL: los lectores no esperan a que termine una escritura (el
+                # modo por defecto de SQLite bloquea todo el archivo mientras
+                # alguien escribe). Con varias personas preguntando a la vez,
+                # sin esto cada `registrar()`/`contar()` podria demorar a los
+                # demas.
+                "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;",
+                # Toma el lock de escritura al abrir la transaccion, no a
+                # mitad de camino: evita el "database is locked" que da el
+                # modo por defecto cuando dos escrituras casi se cruzan.
+                "transaction_mode": "IMMEDIATE",
+            },
+        }
+    }
 
 # ---------------------------------------------------------------------------
 # Login: solo Google, solo cuentas del dominio de Azerta.
@@ -233,6 +257,13 @@ ACCOUNT_EMAIL_VERIFICATION = "none"
 ACCOUNT_ADAPTER = "chat.adapters.SoloAzertaAccountAdapter"
 SOCIALACCOUNT_ADAPTER = "chat.adapters.SoloAzertaSocialAdapter"
 
+# Sin esto, allauth no deja que el link "Continuar con Google" (un <a href>,
+# o sea un GET) redirija directo: por seguridad CSRF muestra antes una
+# pantalla propia pidiendo confirmar con otro clic. Como el botón ya es un
+# clic explicito del usuario y no dispara ningun cambio de estado por su
+# cuenta, ese paso extra no suma nada y se salta.
+SOCIALACCOUNT_LOGIN_ON_GET = True
+
 GOOGLE_WORKSPACE_DOMAIN = os.getenv("GOOGLE_WORKSPACE_DOMAIN", "azerta.cl")
 
 SOCIALACCOUNT_PROVIDERS = {
@@ -255,7 +286,15 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_DIRS = [BASE_DIR / "static"]
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    # Nombra cada archivo con un hash de su contenido y los deja
+    # pre-comprimidos: whitenoise se los sirve con cache-control largo sin
+    # que un deploy nuevo sirva de cache un JS/CSS viejo.
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Por defecto en base de datos: sobrevive a los reinicios y lo comparten todos
