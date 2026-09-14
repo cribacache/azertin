@@ -100,6 +100,18 @@ GOOGLE_DRIVE_FOLDER_ID = _m.group(1) if _m else _drive_folder
 # comparte con el email de esa cuenta.
 GOOGLE_DRIVE_CREDENTIALS = os.getenv("GOOGLE_DRIVE_CREDENTIALS", "").strip()
 
+# ---------------------------------------------------------------------------
+# Envio de correo (chat/cumpleanos_foto.py): Gmail API con una cuenta de
+# servicio delegada en todo el dominio de azerta.cl (Google Workspace admin
+# -> Seguridad -> Controles de API -> Delegacion en todo el dominio), no SMTP
+# ni contraseña de aplicacion. La cuenta de servicio "manda como" el
+# remitente de abajo, nunca como cualquier otra persona del dominio.
+# ---------------------------------------------------------------------------
+GOOGLE_GMAIL_CREDENTIALS = os.getenv("GOOGLE_GMAIL_CREDENTIALS", "").strip()
+GOOGLE_GMAIL_REMITENTE = os.getenv("GOOGLE_GMAIL_REMITENTE", "iris@azerta.cl").strip()
+# A quien le llega la tarjeta de cumpleanos (hoy: Personas).
+GOOGLE_GMAIL_DESTINO = os.getenv("GOOGLE_GMAIL_DESTINO", "").strip()
+
 DRIVE_CACHE_DIR = Path(os.getenv("DRIVE_CACHE_DIR", BASE_DIR / ".drive_cache"))
 # Cada cuanto se vuelve a mirar Drive (solo baja lo que cambio).
 DRIVE_SYNC_TTL = int(os.getenv("DRIVE_SYNC_TTL", "300"))

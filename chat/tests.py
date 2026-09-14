@@ -2723,3 +2723,122 @@ class FotosEquipoTests(TestCase):
     def test_pagina_caida_no_rompe_nada(self, mock_get):
         from chat import fotos_equipo
         self.assertIsNone(fotos_equipo.url_de("Cristina Bitar"))
+
+
+class CumpleanosFotoTests(TestCase):
+    """chat/cumpleanos_foto.py: compone la tarjeta con el template real del
+    repo y manda el correo via Gmail API (mockeada, nunca de verdad)."""
+
+    PERSONA = {"nombre": "Ana María Rojas Soto", "_picture_url": "https://buk.example/ana.jpg"}
+
+    def setUp(self):
+        cache.clear()
+
+    def _foto_falsa(self):
+        from io import BytesIO
+        from PIL import Image
+        buf = BytesIO()
+        Image.new("RGB", (400, 500), (200, 150, 100)).save(buf, format="JPEG")
+        return buf.getvalue()
+
+    @patch("chat.cumpleanos_foto.requests.get")
+    @patch("chat.fotos_equipo.url_de", return_value="https://azerta.cl/foto-ana.png")
+    def test_arma_una_tarjeta_valida(self, _url_de, mock_get):
+        from PIL import Image
+        from io import BytesIO
+        from chat import cumpleanos_foto
+
+        mock_get.return_value = Mock(content=self._foto_falsa(),
+                                     raise_for_status=lambda: None)
+        png = cumpleanos_foto.tarjeta(self.PERSONA)
+
+        imagen = Image.open(BytesIO(png))
+        self.assertEqual(imagen.format, "PNG")
+        self.assertEqual(imagen.size, (2500, 2500))
+
+    @patch("chat.fotos_equipo.url_de", return_value="https://azerta.cl/foto-ana.png")
+    @patch("chat.cumpleanos_foto.requests.get")
+    def test_usa_azerta_antes_que_buk(self, mock_get, mock_url_de):
+        from chat import cumpleanos_foto
+        mock_get.return_value = Mock(content=self._foto_falsa(),
+                                     raise_for_status=lambda: None)
+        cumpleanos_foto.tarjeta(self.PERSONA)
+        mock_get.assert_called_once_with("https://azerta.cl/foto-ana.png", timeout=15)
+
+    @patch("chat.fotos_equipo.url_de", return_value=None)
+    @patch("chat.cumpleanos_foto.requests.get")
+    def test_cae_a_buk_si_no_esta_en_azerta(self, mock_get, _url_de):
+        from chat import cumpleanos_foto
+        mock_get.return_value = Mock(content=self._foto_falsa(),
+                                     raise_for_status=lambda: None)
+        cumpleanos_foto.tarjeta(self.PERSONA)
+        mock_get.assert_called_once_with(self.PERSONA["_picture_url"], timeout=15)
+
+    @patch("chat.fotos_equipo.url_de", return_value=None)
+    def test_sin_foto_en_ningun_lado_lanza_sinfoto(self, _url_de):
+        from chat import cumpleanos_foto
+        persona_sin_foto = {"nombre": "Nadie Registrado", "_picture_url": ""}
+        with self.assertRaises(cumpleanos_foto.SinFoto):
+            cumpleanos_foto.tarjeta(persona_sin_foto)
+
+    def test_nombre_corto_usa_nombre_pila_y_apellido_de_buk(self):
+        """Con nombre compuesto ("Irene Maria"), tomar las primeras dos
+        palabras del full_name da "Irene Maria" -sin apellido-. Con los
+        campos separados de BUK da "Irene Cobo", que es lo correcto."""
+        from chat import cumpleanos_foto
+        persona = {"nombre": "Irene María Cobo Paris",
+                   "_nombre_pila": "Irene María", "_apellido": "Cobo"}
+        self.assertEqual(cumpleanos_foto._nombre_corto(persona), "Irene Cobo")
+
+    def test_nombre_corto_sin_campos_de_buk_cae_al_split_ingenuo(self):
+        from chat import cumpleanos_foto
+        persona = {"nombre": "Ana María Rojas Soto"}
+        self.assertEqual(cumpleanos_foto._nombre_corto(persona), "Ana María")
+
+    @patch("chat.cumpleanos_foto._enviar_correo")
+    @patch("chat.cumpleanos_foto.tarjeta", return_value=b"bytes-de-imagen")
+    def test_enviar_tarjeta_arma_el_correo_con_la_imagen(self, mock_tarjeta, mock_enviar):
+        from chat import cumpleanos_foto
+        with override_settings(GOOGLE_GMAIL_DESTINO="personas@azerta.cl"):
+            cumpleanos_foto.enviar_tarjeta(self.PERSONA)
+        mock_enviar.assert_called_once()
+        kwargs = mock_enviar.call_args.kwargs
+        self.assertEqual(kwargs["destinatario"], "personas@azerta.cl")
+        self.assertEqual(kwargs["imagen_png"], b"bytes-de-imagen")
+        self.assertIn("Ana María Rojas Soto", kwargs["asunto"])
+
+
+class EnviarCumpleanosCommandTests(TestCase):
+    """El management command no debe cortarse por una persona sin foto: el
+    resto del dia debe seguir procesandose (ver chat/cumpleanos_foto.py)."""
+
+    def setUp(self):
+        cache.clear()
+
+    @patch("chat.cumpleanos_foto.enviar_tarjeta")
+    @patch("chat.buk.cumpleanos")
+    def test_una_persona_sin_foto_no_corta_a_las_demas(self, mock_cumpleanos, mock_enviar):
+        from io import StringIO
+        from django.core.management import call_command
+        from chat import cumpleanos_foto
+
+        mock_cumpleanos.return_value = ([
+            {"nombre": "Sin Foto Nadie"},
+            {"nombre": "Con Foto Alguien"},
+        ], 0)
+        mock_enviar.side_effect = [cumpleanos_foto.SinFoto("sin foto"), None]
+
+        salida = StringIO()
+        call_command("enviar_cumpleanos", stdout=salida)
+        texto = salida.getvalue()
+        self.assertIn("Sin Foto Nadie", texto)
+        self.assertIn("Con Foto Alguien: tarjeta enviada", texto)
+        self.assertEqual(mock_enviar.call_count, 2)
+
+    @patch("chat.buk.cumpleanos", return_value=([], 0))
+    def test_nadie_cumple_hoy(self, _cumpleanos):
+        from io import StringIO
+        from django.core.management import call_command
+        salida = StringIO()
+        call_command("enviar_cumpleanos", stdout=salida)
+        self.assertIn("Nadie cumple hoy.", salida.getvalue())

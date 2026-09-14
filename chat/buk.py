@@ -239,6 +239,16 @@ def directorio(forzar=False):
             # el email solo cruza la cuenta de Google con el empleado para saber
             # el rol de quien pregunta; nunca se expone en una respuesta
             "email": _email(emp),
+            # respaldo de chat/fotos_equipo.py (azerta.cl/equipo) para quien no
+            # esta listado ahi todavia; nunca se expone en una respuesta
+            "_picture_url": emp.get("picture_url") or "",
+            # BUK separa nombre de pila y apellido (a diferencia de "nombre",
+            # que es el full_name armado por BUK y puede traer nombre
+            # compuesto: "Irene Maria"). chat/cumpleanos_foto.py los necesita
+            # aparte para armar "Irene Cobo" en vez de "Irene Maria" en la
+            # tarjeta. Nunca se expone en una respuesta.
+            "_nombre_pila": (emp.get("first_name") or "").strip(),
+            "_apellido": (emp.get("surname") or "").strip(),
         }
     from . import cuentas
     cuentas.asignar(mapa)
