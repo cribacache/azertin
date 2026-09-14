@@ -1,0 +1,26 @@
+{% load assets %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Acceso denegado · Iris</title>
+  <link rel="stylesheet" href="{% static_v 'chat/app.css' %}">
+</head>
+<body>
+  <main class="shell shell-angosto">
+    <header class="topbar">
+      <span class="brand" aria-hidden="true">Iris</span>
+    </header>
+
+    <section class="propuesta-panel">
+      <p class="error-codigo" aria-hidden="true">403</p>
+      <h1 class="propuesta-titulo">Acceso denegado</h1>
+      <p class="propuesta-intro">
+        No tenés permiso para ver esta página.
+      </p>
+      <a class="backlog-btn" href="{% url 'chat-page' %}">Volver al inicio</a>
+    </section>
+  </main>
+</body>
+</html>

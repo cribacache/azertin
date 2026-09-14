@@ -264,6 +264,9 @@ ACCOUNT_LOGOUT_REDIRECT_URL = "account_login"
 # Google ya valida el email antes de entregarlo: no hace falta el correo de
 # confirmacion propio de allauth para cuentas locales.
 ACCOUNT_EMAIL_VERIFICATION = "none"
+# Sin esto, "Salir" (un <a href>, o sea un GET) muestra antes una pantalla de
+# allauth pidiendo confirmar con otro clic. El botón ya es la confirmación.
+ACCOUNT_LOGOUT_ON_GET = True
 
 ACCOUNT_ADAPTER = "chat.adapters.SoloAzertaAccountAdapter"
 SOCIALACCOUNT_ADAPTER = "chat.adapters.SoloAzertaSocialAdapter"

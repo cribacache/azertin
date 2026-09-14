@@ -477,6 +477,14 @@ body::after {
 
 .propuesta-panel { flex: none; }
 
+.error-codigo {
+  margin: 0 0 4px;
+  color: var(--rosado);
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+
 .propuesta-titulo {
   margin: 0 0 10px;
   color: var(--humo);
