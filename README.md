@@ -266,6 +266,11 @@ Las repeticiones se agrupan en una fila, así que el orden por frecuencia indica
 qué conviene cubrir primero. Para marcar una como resuelta:
 `python manage.py consultas --resolver 1`.
 
+**También desde `/portal/preguntas/`** (staff, detrás del login de Google):
+la misma lista ordenada por veces, con pestañas Pendientes / Resueltas /
+Todas y un botón para marcar cada una — para no tener que entrar por
+terminal ni por `/admin/` solo para ir tildando lo que ya se cubrió.
+
 ### Backlog manual: propuestas y mejoras a futuro
 
 Ese backlog es automático: solo se llena con preguntas reales que alguien le
@@ -326,11 +331,16 @@ Google. Separada del `/admin/` de Django:
 - **Usuarios y roles** (`/portal/`): todas las cuentas, su match en BUK
   (nombre, cargo, área, familia de rol) y su rol en Iris, con cambio de rol
   inline.
+- **Preguntas sin resolver** (`/portal/preguntas/`): el backlog de
+  `ConsultaNoResuelta` (ver [Preguntas que no supo
+  responder](#preguntas-que-no-supo-responder)), ordenado por cuántas veces
+  se repitió, con pestañas Pendientes / Resueltas / Todas y un botón para
+  marcar cada una — para empezar a programar primero lo que más se repite.
 - **Eventos de seguridad** (`/portal/eventos/`): lo que el sistema bloqueó o
   limitó (`chat/models.py::EventoSeguridad`) — inyecciones detectadas,
   consultas fuera de alcance, rate-limit, cupo diario. Solo lectura.
 
-Los tres modelos también quedan en `/admin/` como respaldo.
+Los cuatro modelos también quedan en `/admin/` como respaldo.
 
 **Invitar por correo (`chat/models.py::InvitacionRol`):** sin esto, subir el
 rol de alguien nuevo significa esperar a que esa persona inicie sesión por lo

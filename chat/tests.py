@@ -2134,6 +2134,59 @@ class PortalTests(_DjangoTestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "prueba")
 
+    def test_pagina_de_preguntas_muestra_pendientes_por_defecto(self):
+        from chat.models import ConsultaNoResuelta
+        ConsultaNoResuelta.objects.create(
+            mensaje="cuanto turno tengo", mensaje_normalizado="cuanto turno tengo",
+            motivo="sin_datos", veces=3)
+        ConsultaNoResuelta.objects.create(
+            mensaje="ya cubierta", mensaje_normalizado="ya cubierta",
+            motivo="sin_datos", resuelta=True)
+        c = Client()
+        c.force_login(self.staff)
+        resp = c.get("/portal/preguntas/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "cuanto turno tengo")
+        self.assertNotContains(resp, "ya cubierta")
+
+    def test_pagina_de_preguntas_filtro_resueltas(self):
+        from chat.models import ConsultaNoResuelta
+        ConsultaNoResuelta.objects.create(
+            mensaje="ya cubierta", mensaje_normalizado="ya cubierta", resuelta=True)
+        c = Client()
+        c.force_login(self.staff)
+        resp = c.get("/portal/preguntas/?estado=resueltas")
+        self.assertContains(resp, "ya cubierta")
+
+    def test_marcar_pregunta_como_resuelta(self):
+        from chat.models import ConsultaNoResuelta
+        consulta = ConsultaNoResuelta.objects.create(
+            mensaje="cuanto turno tengo", mensaje_normalizado="cuanto turno tengo")
+        c = Client()
+        c.force_login(self.staff)
+        resp = c.post("/portal/preguntas/", data={
+            "consulta_id": consulta.pk, "accion": "marcar_resuelta", "estado": "pendientes"})
+        self.assertEqual(resp.status_code, 302)
+        consulta.refresh_from_db()
+        self.assertTrue(consulta.resuelta)
+
+    def test_volver_a_marcar_como_pendiente(self):
+        from chat.models import ConsultaNoResuelta
+        consulta = ConsultaNoResuelta.objects.create(
+            mensaje="cuanto turno tengo", mensaje_normalizado="cuanto turno tengo",
+            resuelta=True)
+        c = Client()
+        c.force_login(self.staff)
+        c.post("/portal/preguntas/", data={
+            "consulta_id": consulta.pk, "accion": "marcar_pendiente", "estado": "resueltas"})
+        consulta.refresh_from_db()
+        self.assertFalse(consulta.resuelta)
+
+    def test_normal_no_puede_entrar_a_preguntas(self):
+        c = Client()
+        c.force_login(self.normal)
+        self.assertEqual(c.get("/portal/preguntas/").status_code, 403)
+
 
 # ===========================================================================
 # Documentos desde Google Drive (chat/drive.py, chat/docx.py). Bajo `test`

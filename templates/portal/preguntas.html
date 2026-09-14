@@ -1,0 +1,54 @@
+{% extends "portal/base.html" %}
+
+{% block titulo %}Preguntas sin resolver{% endblock %}
+{% block encabezado %}Preguntas sin resolver{% endblock %}
+{% block subtitulo %}Lo que el asistente no supo responder, agrupado y
+ordenado por cuántas veces se repitió: lo más repetido es lo que más
+conviene programar primero.{% endblock %}
+{% block nav_preguntas %}activo{% endblock %}
+
+{% block contenido %}
+  <div class="filtros">
+    {% for valor, cfg in estados.items %}
+      <a href="?estado={{ valor }}" class="{% if valor == estado_activo %}activo{% endif %}">{{ cfg.etiqueta }}</a>
+    {% endfor %}
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Pregunta</th>
+        <th>Motivo</th>
+        <th>Veces</th>
+        <th>Última vez</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in preguntas %}
+        <tr>
+          <td>{{ p.mensaje }}</td>
+          <td><span class="pill">{{ p.get_motivo_display }}</span></td>
+          <td>{{ p.veces }}</td>
+          <td class="tenue">{{ p.ultima_vez|date:"Y-m-d H:i" }}</td>
+          <td>
+            <form method="post" class="rol-form">
+              {% csrf_token %}
+              <input type="hidden" name="consulta_id" value="{{ p.pk }}">
+              <input type="hidden" name="estado" value="{{ estado_activo }}">
+              {% if p.resuelta %}
+                <input type="hidden" name="accion" value="marcar_pendiente">
+                <button type="submit">Volver a pendiente</button>
+              {% else %}
+                <input type="hidden" name="accion" value="marcar_resuelta">
+                <button type="submit">Marcar resuelta</button>
+              {% endif %}
+            </form>
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="tenue">Nada por acá.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

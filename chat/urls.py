@@ -10,5 +10,6 @@ urlpatterns = [
     path("api/feedback/", views.api_feedback, name="chat-feedback"),
     # Portal de administracion (solo staff, detras del login de Google).
     path("portal/", portal.usuarios, name="portal-usuarios"),
+    path("portal/preguntas/", portal.preguntas, name="portal-preguntas"),
     path("portal/eventos/", portal.eventos, name="portal-eventos"),
 ]

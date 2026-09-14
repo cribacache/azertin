@@ -1,4 +1,5 @@
-"""Portal de administración (staff): roles de usuario y eventos de seguridad.
+"""Portal de administración (staff): roles de usuario, backlog de preguntas
+y eventos de seguridad.
 
 Vive dentro de la app, detrás del login de Google (no está en
 `chat.middleware.EXENTAS`) y además exige `is_staff`. Separado del `/admin/`
@@ -17,7 +18,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods
 
 from . import buk
-from .models import EventoSeguridad, InvitacionRol, PerfilUsuario
+from .models import ConsultaNoResuelta, EventoSeguridad, InvitacionRol, PerfilUsuario
 
 User = get_user_model()
 
@@ -168,4 +169,49 @@ def eventos(request):
         "eventos": qs[:200],
         "tipos": EventoSeguridad.TIPOS,
         "tipo_activo": tipo,
+    })
+
+
+# "pendientes" es el default: es lo que hay que programar, lo que ya se
+# cubrio no compite por la atencion de quien entra a mirar el backlog.
+_ESTADOS_PREGUNTAS = {
+    "pendientes": {"resuelta": False, "etiqueta": "Pendientes"},
+    "resueltas": {"resuelta": True, "etiqueta": "Resueltas"},
+    "todas": {"resuelta": None, "etiqueta": "Todas"},
+}
+
+
+@never_cache
+@_solo_staff
+@require_http_methods(["GET", "POST"])
+def preguntas(request):
+    """Backlog de preguntas que el asistente no supo responder
+    (`ConsultaNoResuelta`), ordenado por cuantas veces se repitio: las que
+    mas se repiten son las que conviene programar primero.
+    """
+    if request.method == "POST":
+        fila = ConsultaNoResuelta.objects.filter(
+            pk=request.POST.get("consulta_id")).first()
+        if fila:
+            fila.resuelta = request.POST.get("accion") == "marcar_resuelta"
+            fila.save(update_fields=["resuelta"])
+        # Validado contra la lista fija de estados antes de armar la URL: el
+        # valor viene del POST, no queda a la vista.
+        vuelta = request.POST.get("estado")
+        vuelta = vuelta if vuelta in _ESTADOS_PREGUNTAS else "pendientes"
+        return redirect(f"{request.path}?estado={vuelta}")
+
+    estado = request.GET.get("estado") or "pendientes"
+    if estado not in _ESTADOS_PREGUNTAS:
+        estado = "pendientes"
+    filtro = _ESTADOS_PREGUNTAS[estado]["resuelta"]
+
+    qs = ConsultaNoResuelta.objects.all()
+    if filtro is not None:
+        qs = qs.filter(resuelta=filtro)
+
+    return render(request, "portal/preguntas.html", {
+        "preguntas": qs[:200],
+        "estados": _ESTADOS_PREGUNTAS,
+        "estado_activo": estado,
     })
