@@ -6,6 +6,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.http import JsonResponse
 from django.shortcuts import render
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
 from . import antiprompt, asistente, autorizacion, buk, documentos, perfil, ratelimit, respuestas
@@ -129,10 +130,12 @@ def responder_no_disponible():
     }
 
 
+@never_cache
 def chat_page(request):
     return render(request, "chat/index.html")
 
 
+@never_cache
 def propuestas_nueva(request):
     """Cualquiera puede proponer una idea, sin iniciar sesion.
 
@@ -164,6 +167,7 @@ def propuestas_nueva(request):
     return render(request, "chat/propuesta_nueva.html", {"form": form, "enviada": False})
 
 
+@never_cache
 @require_POST
 def api_feedback(request):
     """El boton de pulgar abajo en una respuesta: la marca como no exitosa.
@@ -190,6 +194,7 @@ def api_feedback(request):
     return JsonResponse({"ok": True})
 
 
+@never_cache
 @require_GET
 def api_status(request):
     # Lo llama la pagina al cargar: recargar empieza una conversacion limpia,
@@ -211,6 +216,7 @@ def api_status(request):
     })
 
 
+@never_cache
 @require_POST
 def chat_message(request):
     usuario = request.user

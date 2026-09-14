@@ -12,8 +12,8 @@ a cubrir, que no vinieron de una pregunta real en el chat.
 
 from django.contrib import admin, messages
 
-from .models import (ConsultaNoResuelta, EventoSeguridad, PerfilUsuario,
-                     Pregunta, Propuesta)
+from .models import (ConsultaNoResuelta, EventoSeguridad, InvitacionRol,
+                     PerfilUsuario, Pregunta, Propuesta)
 
 
 @admin.register(PerfilUsuario)
@@ -38,6 +38,30 @@ class PerfilUsuarioAdmin(admin.ModelAdmin):
             else:
                 obj.rol = PerfilUsuario.EJECUTIVO
         obj.actualizado_por = request.user
+        super().save_model(request, obj, form, change)
+
+
+@admin.register(InvitacionRol)
+class InvitacionRolAdmin(admin.ModelAdmin):
+    """El trabajo del dia a dia va en /portal/; esto es el respaldo."""
+
+    list_display = ("email", "rol", "creada_por", "creada_en")
+    list_filter = ("rol",)
+    search_fields = ("email",)
+    list_editable = ("rol",)
+    ordering = ("email",)
+
+    def save_model(self, request, obj, form, change):
+        # Misma restriccion que /portal/ y PerfilUsuarioAdmin: "gerencia"
+        # solo la reparte un superusuario.
+        if obj.rol == PerfilUsuario.GERENCIA and not request.user.is_superuser:
+            messages.error(request,
+                           "Solo un superusuario puede asignar el rol gerencia.")
+            if change:
+                obj.rol = type(obj).objects.get(pk=obj.pk).rol
+            else:
+                obj.rol = PerfilUsuario.EJECUTIVO
+        obj.creada_por = obj.creada_por or request.user
         super().save_model(request, obj, form, change)
 
 

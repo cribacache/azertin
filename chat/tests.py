@@ -1106,6 +1106,83 @@ class BeneficiosTests(TestCase):
         self.assertNotIn("field_values", crudo)
 
 
+class TurnosTests(TestCase):
+    """La tabla de turnos (chat/turnos.py): varias areas apiladas en una sola
+    hoja, cada una con su propia fila de titulo y su propio encabezado."""
+
+    CSV = (
+        "Asuntos Publicos,,,,,\n"
+        "Nombre,Cargo,Forma de trabajo,Modalidad,N° puesto,Observacion\n"
+        "Ana Rojas,Analista,Permanente,Presencial,12,\n"
+        "Juan Soto,Consultor,Turno 1,Hibrido,-,Llega tarde los lunes\n"
+        ",,,,,\n"
+        "Digital,,,,,\n"
+        "Nombre,Cargo,Forma de trabajo,Modalidad,N° puesto,\n"
+        "Luis  Perez ,Programador,Turno 2,Hibrido,-,\n"
+    )
+
+    def setUp(self):
+        cache.clear()
+
+    def _carpeta(self):
+        carpeta = Path(tempfile.mkdtemp())
+        (carpeta / "Turnos.csv").write_text(self.CSV, encoding="utf-8")
+        return carpeta
+
+    def test_separa_las_filas_por_area(self):
+        from chat import turnos
+        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
+            filas = turnos.cargar(forzar=True)
+        por_nombre = {f["nombre"]: f for f in filas}
+        self.assertEqual(por_nombre["Ana Rojas"]["area"], "Asuntos Publicos")
+        self.assertEqual(por_nombre["Ana Rojas"]["forma_trabajo"], "Permanente")
+        self.assertEqual(por_nombre["Luis  Perez"]["area"], "Digital")
+        self.assertEqual(por_nombre["Luis  Perez"]["modalidad"], "Hibrido")
+        self.assertEqual(len(filas), 3)
+
+    def test_buscar_tolera_espacios_de_mas(self):
+        from chat import turnos
+        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
+            fila = turnos.buscar("Luis Perez")
+        self.assertEqual(fila["forma_trabajo"], "Turno 2")
+
+    def test_buscar_sin_coincidencia_devuelve_none(self):
+        from chat import turnos
+        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
+            self.assertIsNone(turnos.buscar("Nadie Existe"))
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_turno_de_persona_resuelve_el_nombre_via_buk(self, mocked):
+        from chat import herramientas
+        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
+            resultado = herramientas.turno_de_persona("Ana")
+        self.assertTrue(resultado["encontrada"])
+        self.assertTrue(resultado["turno_registrado"])
+        self.assertEqual(resultado["nombre"], "Ana Rojas")
+        self.assertEqual(resultado["forma_trabajo"], "Permanente")
+        self.assertEqual(resultado["area"], "Asuntos Publicos")
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_turno_de_persona_sin_fila_en_la_planilla(self, mocked):
+        """Existe en BUK pero no en la planilla de turnos: distinto de no
+        haber encontrado a la persona."""
+        from chat import herramientas
+        carpeta = Path(tempfile.mkdtemp())
+        (carpeta / "Turnos.csv").write_text(
+            "Nombre,Cargo,Forma de trabajo,Modalidad,N° puesto,\n"
+            "Otra Persona,Cargo,Permanente,Presencial,-,\n", encoding="utf-8")
+        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=carpeta):
+            resultado = herramientas.turno_de_persona("Ana")
+        self.assertTrue(resultado["encontrada"])
+        self.assertFalse(resultado["turno_registrado"])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_turno_de_persona_nombre_desconocido(self, mocked):
+        from chat import herramientas
+        resultado = herramientas.turno_de_persona("nadie existe de verdad")
+        self.assertFalse(resultado["encontrada"])
+
+
 class InfoPersonaTests(TestCase):
     """`info_persona`: la herramienta que cubre "quien es X" / "que cuentas
     maneja X" con una sola llamada, en vez de una por cada forma de decirlo.
@@ -1681,6 +1758,34 @@ class SoloAzertaAdapterTests(_DjangoTestCase):
         from chat.adapters import SoloAzertaAccountAdapter
         self.assertFalse(SoloAzertaAccountAdapter().is_open_for_signup(None))
 
+    def test_una_invitacion_pendiente_se_aplica_al_crear_la_cuenta(self):
+        """El primer login de Google con un correo invitado (ver /portal/)
+        deja el PerfilUsuario con el rol que dejo el staff, no ROL_DEFECTO."""
+        from django.contrib.auth.models import User
+
+        from chat.adapters import SoloAzertaSocialAdapter
+        from chat.models import InvitacionRol, PerfilUsuario
+
+        InvitacionRol.objects.create(email="nueva@azerta.cl", rol="gerencia")
+        usuario = User.objects.create_user(
+            username="nueva@azerta.cl", email="nueva@azerta.cl")
+
+        SoloAzertaSocialAdapter._aplicar_invitacion(usuario)
+
+        self.assertEqual(PerfilUsuario.objects.get(usuario=usuario).rol, "gerencia")
+        self.assertFalse(InvitacionRol.objects.exists())  # se consume
+
+    def test_sin_invitacion_pendiente_no_crea_perfil(self):
+        from django.contrib.auth.models import User
+
+        from chat.adapters import SoloAzertaSocialAdapter
+        from chat.models import PerfilUsuario
+
+        usuario = User.objects.create_user(
+            username="nadie@azerta.cl", email="nadie@azerta.cl")
+        SoloAzertaSocialAdapter._aplicar_invitacion(usuario)
+        self.assertFalse(PerfilUsuario.objects.filter(usuario=usuario).exists())
+
 
 # ===========================================================================
 # Seguridad: autorizacion por rol, portal, rate limiting, anti-abuso LLM y
@@ -1971,6 +2076,54 @@ class PortalTests(_DjangoTestCase):
         c.post("/portal/", data={"usuario_id": self.normal.pk, "rol": "root"})
         self.assertFalse(PerfilUsuario.objects.filter(usuario=self.normal).exists())
 
+    def test_invitar_a_un_correo_nuevo_queda_pendiente(self):
+        from chat.models import InvitacionRol
+        c = Client()
+        c.force_login(self.staff)
+        resp = c.post("/portal/", data={
+            "accion": "invitar", "email": "Nueva@Azerta.cl", "rol": "ejecutivo"})
+        self.assertEqual(resp.status_code, 302)
+        inv = InvitacionRol.objects.get()
+        self.assertEqual(inv.email, "nueva@azerta.cl")  # normalizado
+        self.assertEqual(inv.rol, "ejecutivo")
+        self.assertEqual(inv.creada_por, self.staff)
+
+    def test_invitar_a_un_correo_de_otro_dominio_no_se_acepta(self):
+        from chat.models import InvitacionRol
+        c = Client()
+        c.force_login(self.staff)
+        c.post("/portal/", data={
+            "accion": "invitar", "email": "alguien@gmail.com", "rol": "ejecutivo"})
+        self.assertFalse(InvitacionRol.objects.exists())
+
+    def test_invitar_a_alguien_que_ya_tiene_cuenta_aplica_directo(self):
+        from chat.models import InvitacionRol, PerfilUsuario
+        c = Client()
+        c.force_login(self.staff)
+        c.post("/portal/", data={
+            "accion": "invitar", "email": self.normal.email, "rol": "sin_acceso"})
+        self.assertFalse(InvitacionRol.objects.exists())
+        self.assertEqual(PerfilUsuario.objects.get(usuario=self.normal).rol, "sin_acceso")
+
+    def test_staff_no_superuser_no_puede_invitar_con_gerencia(self):
+        from chat.models import InvitacionRol
+        c = Client()
+        c.force_login(self.staff)
+        resp = c.post("/portal/", data={
+            "accion": "invitar", "email": "nueva@azerta.cl", "rol": "gerencia"})
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(InvitacionRol.objects.exists())
+
+    def test_cancelar_invitacion(self):
+        from chat.models import InvitacionRol
+        inv = InvitacionRol.objects.create(email="nueva@azerta.cl", rol="ejecutivo")
+        c = Client()
+        c.force_login(self.staff)
+        resp = c.post("/portal/", data={
+            "accion": "cancelar_invitacion", "invitacion_id": inv.pk})
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(InvitacionRol.objects.exists())
+
     def test_pagina_de_eventos(self):
         from chat.models import EventoSeguridad
         EventoSeguridad.objects.create(tipo="injection", email="x@azerta.cl",
@@ -2091,6 +2244,64 @@ class DriveSyncTests(_DjangoTestCase):
         self.assertTrue(resumen["errores"])
         self.assertEqual(resumen["descargados"], 0)
 
+    @patch("chat.drive._get")
+    def test_una_hoja_en_la_lista_permitida_se_exporta_a_csv(self, _get):
+        """Una Google Sheet cuyo nombre esta en DRIVE_HOJAS_PERMITIDAS (ej. la
+        tabla de turnos) entra al corpus como .csv, igual que un Doc nativo
+        entra como .md."""
+        from chat import drive
+        _get.return_value = b"Nombre,Turno\nAna,Turno 1\n"
+        with override_settings(DRIVE_HOJAS_PERMITIDAS={"Turnos"}):
+            contenido = drive._contenido({
+                "id": "a3", "name": "Turnos", "mimeType": drive.MIME_SHEET})
+        self.assertEqual(contenido, (b"Nombre,Turno\nAna,Turno 1\n", ".csv"))
+        _get.assert_called_once_with(
+            "/files/a3/export", {"mimeType": "text/csv"}, binario=True)
+
+    @patch("chat.drive._get")
+    def test_una_hoja_fuera_de_la_lista_se_omite(self, _get):
+        """Sin estar en DRIVE_HOJAS_PERMITIDAS, una hoja nunca se descarga -
+        puede traer RUT, telefono o email de cada persona (ver docstring del
+        modulo). Vacio por defecto, asi que ninguna entra sin decision explicita."""
+        from chat import drive
+        with override_settings(DRIVE_HOJAS_PERMITIDAS=set()):
+            contenido = drive._contenido({
+                "id": "a9", "name": "Base de sueldos", "mimeType": drive.MIME_SHEET})
+        self.assertIsNone(contenido)
+        _get.assert_not_called()
+
+    @patch("chat.drive._get")
+    def test_una_hoja_con_espacios_de_mas_igual_matchea(self, _get):
+        """El nombre en Drive a veces trae espacios de sobra al final (asi
+        paso con la tabla de turnos real); no deberia bastar para omitirla."""
+        from chat import drive
+        _get.return_value = b"x"
+        with override_settings(DRIVE_HOJAS_PERMITIDAS={"Turnos"}):
+            contenido = drive._contenido({
+                "id": "a3", "name": "Turnos  ", "mimeType": drive.MIME_SHEET})
+        self.assertEqual(contenido, (b"x", ".csv"))
+
+    @patch("chat.drive._get")
+    def test_la_carpeta_papelero_se_salta_entera(self, _get):
+        """Una subcarpeta "Papelero"/"Papelera" ni se recorre: lo que hay
+        adentro (viejo, duplicado) no debe llegar al corpus de Iris."""
+        from chat import drive
+
+        def responder(path, params, binario=False):
+            self.assertEqual(path, "/files")
+            padre = params["q"].split("'")[1]
+            if padre == "raiz":
+                return {"files": [
+                    {"id": "ok.pdf", "name": "Politica.pdf", "mimeType": "application/pdf"},
+                    {"id": "trash", "name": "Papelero", "mimeType": drive.MIME_FOLDER},
+                ]}
+            self.assertNotEqual(padre, "trash", "no deberia entrar a Papelero")
+            return {"files": []}
+
+        _get.side_effect = responder
+        archivos = drive._listar_archivos("raiz")
+        self.assertEqual([a["id"] for a in archivos], ["ok.pdf"])
+
 
 @SIN_DOCUMENTOS
 class DocumentosDesdeDriveTests(TestCase):
@@ -2107,6 +2318,20 @@ class DocumentosDesdeDriveTests(TestCase):
             secciones = documentos.cargar(forzar=True)
         mock_sync.assert_called_once()
         self.assertTrue(any(s["origen"] == "politica.md" for s in secciones))
+
+    @patch("chat.drive.sincronizar_si_toca")
+    def test_csv_de_una_sheet_no_entra_al_corpus(self, _sync):
+        """La tabla de turnos llega como .csv (una Google Sheet exportada,
+        ver chat/drive.py), pero NO se indexa como texto libre: es una tabla
+        de una fila por persona y un fragmento puede devolver la fila de otra
+        (ver chat/turnos.py, que la lee estructurada en su lugar)."""
+        from chat import documentos
+        (self.dir / "Turnos.csv").write_text(
+            "Nombre,Cargo,Forma de trabajo,Modalidad\n"
+            "Ana Perez,Ejecutiva,Turno 1,Hibrido\n" * 10, encoding="utf-8")
+        with override_settings(DOCUMENTOS_FUENTE="drive", DRIVE_CACHE_DIR=self.dir):
+            secciones = documentos.cargar(forzar=True)
+        self.assertFalse(any(s["origen"] == "Turnos.csv" for s in secciones))
 
 
 class DocxTests(_DjangoTestCase):
@@ -2184,3 +2409,21 @@ class AdminBruteForceTests(_DjangoTestCase):
     def test_get_al_login_no_cuenta(self):
         for _ in range(5):
             self.assertNotEqual(self.client.get("/admin/login/").status_code, 429)
+
+
+class CacheControlTests(TestCase):
+    """Web cache poisoning/deception: sin esto, un proxy/CDN delante podria
+    guardar una respuesta personalizada y servirsela a otra persona."""
+
+    def test_paginas_dinamicas_no_son_cacheables(self):
+        for metodo, ruta, kwargs in [
+            ("get", "/", {}),
+            ("get", "/api/status/", {}),
+            ("get", "/propuestas/", {}),
+        ]:
+            resp = getattr(self.client, metodo)(ruta, **kwargs)
+            self.assertIn("no-store", resp.headers.get("Cache-Control", ""), ruta)
+
+    def test_respuesta_del_chat_no_es_cacheable(self):
+        resp = self.client.post("/api/chat/", data="{}", content_type="application/json")
+        self.assertIn("no-store", resp.headers.get("Cache-Control", ""))

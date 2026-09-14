@@ -58,6 +58,9 @@ Reglas:
 - "Que beneficios tiene Azerta" (sin nombrar a nadie) va con
   `listar_beneficios`. "Que beneficios tiene/solicito X" (con nombre) va con
   `beneficios_de_persona`, no con `listar_beneficios`.
+- "Que turno tiene X", "X es presencial o hibrido", "en que puesto esta X"
+  (con nombre) va con `turno_de_persona`, nunca con `buscar_politica`: esa
+  busca en documentos de texto, no en la planilla de turnos.
 - Tienes el historial de esta conversacion. Usalo para entender preguntas de
   seguimiento ("y sus vacaciones?", "y el segundo?") sin pedir que repitan el
   nombre.

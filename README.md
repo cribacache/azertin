@@ -146,7 +146,9 @@ las quita.
 
 > **La planilla de cuentas (`Personas Hrs Sem x Cuenta.xlsx`, con RUTs y horas
 > contractuales) se lee SIEMPRE de `datos/` local**, nunca de Drive, y sigue
-> sin entrar al corpus de búsqueda (`.xlsx` no está en `EXTENSIONES`).
+> sin entrar al corpus de búsqueda (`.xlsx` no está en `EXTENSIONES`). Lo
+> mismo la tabla de turnos (`.csv`, ver [Turnos](#turnos) más abajo): se lee
+> estructurada por fila, no como texto libre.
 
 ### Documentos desde Google Drive
 
@@ -159,7 +161,22 @@ lee de ahí como si fuera `datos/`. Baja solo lo que cambió (firma
 | --- | --- |
 | Google Doc nativo | se exporta a Markdown |
 | PDF / `.txt` / `.md` / `.docx` subido | se baja tal cual (`.docx` se lee con `python-docx`, los encabezados de estilo pasan a títulos Markdown) |
-| Google Sheets / Slides, `.xlsx`, otros | se omiten |
+| Google Sheet nativa, con el nombre exacto en `DRIVE_HOJAS_PERMITIDAS` | se exporta a CSV (ver [Turnos](#turnos)) |
+| Google Sheets no listadas, Slides, `.xlsx`, otros | se omiten |
+
+Las subcarpetas **"Papelero"/"Papelera"** se saltan enteras (recursivo
+también): ahí el equipo deja archivos viejos o duplicados sin borrarlos del
+todo, y no deben entrar al conocimiento de Iris.
+
+**`DRIVE_HOJAS_PERMITIDAS` está vacía por defecto a propósito.** Una Google
+Sheet no listada ahí nunca se descarga, aunque esté en la carpeta compartida:
+la misma carpeta tiene hojas con RUT, teléfono, email y cumpleaños de cada
+persona (bases exportadas de BUK) que jamás deben quedar citables en una
+respuesta del chat. Cada hoja que se agrega a la lista (coma-separado, nombre
+exacto tal cual figura en Drive) es una decisión explícita:
+```bash
+DRIVE_HOJAS_PERMITIDAS=Turnos Tanica y Digital
+```
 
 **Acceso: una cuenta de servicio de solo lectura.** No se pide permiso de
 escritura ni acceso a todo Drive — la cuenta solo ve la carpeta que le
@@ -292,7 +309,8 @@ porque el filtro está en el código, sobre el resultado.
   (contratista, cuenta de servicio), un ejecutivo solo se puede consultar a sí
   mismo. Se puede forzar el cruce con `PerfilUsuario.buk_employee_id`.
 - **Alta nueva:** un usuario sin rol asignado entra como `ejecutivo`
-  (acotado), no bloqueado. El staff lo sube desde el portal si corresponde.
+  (acotado), no bloqueado. El staff lo sube desde el portal si corresponde,
+  o lo deja listo de antemano (ver **Invitar por correo** más abajo).
 - **Listados vs. consulta puntual:** un listado (`¿quién está fuera hoy?`)
   simplemente omite a quien está fuera de alcance; preguntar por una persona
   puntual fuera de alcance responde "no tienes acceso a ese dato".
@@ -312,7 +330,22 @@ Google. Separada del `/admin/` de Django:
   limitó (`chat/models.py::EventoSeguridad`) — inyecciones detectadas,
   consultas fuera de alcance, rate-limit, cupo diario. Solo lectura.
 
-Los dos modelos también quedan en `/admin/` como respaldo.
+Los tres modelos también quedan en `/admin/` como respaldo.
+
+**Invitar por correo (`chat/models.py::InvitacionRol`):** sin esto, subir el
+rol de alguien nuevo significa esperar a que esa persona inicie sesión por lo
+menos una vez (recién ahí existe el `User` al que `PerfilUsuario` se
+engancha) y recién entonces el staff se acuerda de subirlo. Desde `/portal/`
+se puede dejar el rol listo de antemano para un correo del dominio:
+
+- Si ese correo **todavía no tiene cuenta**, queda como `InvitacionRol`
+  pendiente. Se aplica sola en el primer login de Google con ese correo
+  (`chat/adapters.py::SoloAzertaSocialAdapter.save_user`) y se borra al
+  aplicarse.
+- Si ese correo **ya tiene cuenta** (ya inició sesión alguna vez), el rol se
+  aplica directo — no tiene sentido esperar un "primer login" que ya pasó.
+- Mismo candado que el cambio de rol normal: asignar `gerencia` por
+  invitación queda reservado a superusuarios.
 
 ## Límites de uso y anti-abuso
 
@@ -369,6 +402,15 @@ Django no pone solo:
 - **Cross-Origin-Resource-Policy: same-origin** — nadie puede embeber las
   respuestas desde otro origen.
 - **X-Content-Type-Options: nosniff**.
+
+Todas las vistas dinámicas (`chat/views.py`, `chat/portal.py`) llevan
+`@never_cache`: fuerzan `Cache-Control: no-store, private`. Es la defensa
+contra *cache deception* — sin esto, un CDN o proxy compartido que se ponga
+delante en el futuro podría guardar una respuesta personalizada (el chat, el
+portal con roles y eventos) y servírsela a otra persona. Los estáticos
+(`static/`) siguen siendo cacheables por versión (`?v=<mtime>` en
+`chat/templatetags/assets.py`), que es justo lo contrario: contenido público
+e inmutable por versión, sin riesgo de servir algo ajeno.
 
 Además, en `config/settings.py`:
 
@@ -669,6 +711,36 @@ en ningún campo. `INSTRUCCIONES` se lo deja explícito al modelo para que
 responda `NO_SE` ante "en qué consiste X" en vez de inventar una descripción
 a partir del nombre. Si se necesita ese detalle, tiene que venir de un
 documento real (como `datos/politica_vacaciones.md`) que alguien cargue.
+
+## Turnos
+
+Turno (permanente, turno 1, turno 2), modalidad (presencial, híbrido) y
+puesto asignado de cada persona. BUK no tiene este dato: vive en una
+planilla aparte que el equipo de Personas mantiene en Drive ("Turnos Tanica
+y Digital") y que sincroniza como `.csv` (ver [Documentos desde Google
+Drive](#documentos-desde-google-drive), `DRIVE_HOJAS_PERMITIDAS`).
+
+**Se lee estructurada (`chat/turnos.py`), no como texto libre.** Es una
+tabla de bastante más de 60 filas con varias áreas apiladas en la misma
+hoja; partirla en fragmentos de texto para el buscador léxico/semántico
+devolvía, en la práctica, la fila de **otra** persona en vez de la
+preguntada — se probó y se confirmó antes de descartar ese camino. Igual
+que `chat/cuentas.py` con la planilla de cuentas, `turno_de_persona`
+resuelve el nombre contra la nómina de BUK (mismo mecanismo que
+`ausencias_de_persona`, `beneficios_de_persona`, etc.) y después cruza por
+nombre con esta planilla, fila por fila.
+
+**Forma de la planilla:** varias áreas apiladas en una sola hoja, cada una
+con su propia fila de título (una sola celda no vacía, ej. "Digital")
+seguida de su propio encabezado de columnas (`Nombre, Cargo, Forma de
+trabajo, Modalidad, N° puesto, Observación`). Se detectan por forma, no por
+posición, porque cuántas áreas haya puede cambiar.
+
+**Limitación conocida:** el endpoint de exportación de Drive solo entrega
+la primera hoja/pestaña visible del archivo. Si alguien agrega una segunda
+pestaña a la planilla, esa no se baja — para leer todas las pestañas hace
+falta habilitar la API de Sheets (hoy apagada en el proyecto de GCP) y usar
+`spreadsheets.values.get` en vez del export de Drive.
 
 ## Filtro por área
 

@@ -52,6 +52,39 @@ class PerfilUsuario(models.Model):
         return f"{self.usuario.email or self.usuario.username}: {self.rol}"
 
 
+class InvitacionRol(models.Model):
+    """Rol pre-asignado a un correo que todavía no inició sesión.
+
+    Sin esto, alguien nuevo entra con `PerfilUsuario.ROL_DEFECTO` (ejecutivo)
+    y el staff recién puede subirle el rol DESPUÉS de que esa persona ya
+    inició sesión al menos una vez (tiene que existir el `User` para que
+    `PerfilUsuario` lo referencie). Esto deja el rol listo de antemano por
+    correo, para no depender de acordarse de subirlo apenas alguien entra
+    por primera vez.
+
+    Se aplica sola en el primer login de Google con ese correo
+    (`chat/adapters.py::SoloAzertaSocialAdapter.save_user`) y se borra al
+    aplicarse: de ahí en más el rol vive en el `PerfilUsuario` de siempre.
+    """
+
+    email = models.EmailField(unique=True)
+    rol = models.CharField(max_length=16, choices=PerfilUsuario.ROLES,
+                           default=PerfilUsuario.ROL_DEFECTO)
+    creada_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="+",
+    )
+    creada_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "invitación de rol"
+        verbose_name_plural = "invitaciones de rol"
+        ordering = ["email"]
+
+    def __str__(self):
+        return f"{self.email} -> {self.rol}"
+
+
 def rol_de(usuario):
     """Rol efectivo de un usuario. Superuser siempre es gerencia (para no
     quedar afuera de su propia herramienta); el resto, lo que diga su perfil,

@@ -10,9 +10,24 @@ a todo Drive: la cuenta solo ve lo que le compartieron.
 
 Tipos que entran al corpus:
   - Google Docs nativos  -> se exportan a Markdown.
+  - Google Sheets nativas -> SOLO si el nombre esta en settings.DRIVE_HOJAS_PERMITIDAS
+    (ver mas abajo), se exportan a CSV. Por defecto ninguna hoja entra: la
+    carpeta "bases para Iris" tambien tiene hojas con RUT, telefono, email y
+    cumpleanos de cada persona (la base de BUK y las vacaciones, ambas
+    exportadas del BUK original) y esas jamas deben quedar citables en una
+    respuesta del chat. Cada hoja que se agrega a la lista es una decision
+    explicita, no un default.
+    OJO ademas: el endpoint de exportacion de Drive solo entrega la primera
+    hoja visible del archivo; si alguien agrega una segunda pestaña no se
+    baja (para leer todas las pestañas hay que habilitar la API de Sheets,
+    hoy apagada en el proyecto de GCP, y usar spreadsheets.values.get).
   - PDF / .txt / .md / .docx subidos -> se bajan tal cual.
-  - Google Sheets/Slides, .xlsx y todo lo demas -> se omiten (la planilla de
-    cuentas con RUTs se sigue leyendo local, nunca de aca).
+  - Slides, .xlsx, Sheets no listadas y todo lo demas -> se omiten (la
+    planilla de cuentas con RUTs se sigue leyendo local, nunca de aca).
+
+Las subcarpetas "Papelero"/"Papelera" se saltan enteras (recursivo tambien):
+es donde el equipo deja archivos viejos o duplicados sin borrarlos del todo,
+y no deberian entrar al conocimiento de Iris.
 
 Seguridad: cualquiera con permiso de edicion en la carpeta puede dejar un
 documento que entra al conocimiento de Iris. Cada documento de texto se pasa
@@ -38,16 +53,17 @@ BASE = "https://www.googleapis.com/drive/v3"
 
 MIME_FOLDER = "application/vnd.google-apps.folder"
 MIME_DOC = "application/vnd.google-apps.document"
+MIME_SHEET = "application/vnd.google-apps.spreadsheet"
 
 # Extensiones binarias que el pipeline de documentos entiende.
-BINARIAS_OK = {".pdf", ".txt", ".md", ".markdown", ".docx"}
+BINARIAS_OK = {".pdf", ".txt", ".md", ".markdown", ".docx", ".csv"}
 _EXT_POR_MIME = {
     "application/pdf": ".pdf",
     "text/plain": ".txt",
     "text/markdown": ".md",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
 }
-_TEXTO = {".txt", ".md", ".markdown"}
+_TEXTO = {".txt", ".md", ".markdown", ".csv"}
 
 _MANIFIESTO = ".manifest.json"
 
@@ -110,8 +126,16 @@ def _get(path, params, binario=False):
 # Listado y descarga (aislados para poder mockearlos en los tests)
 # ---------------------------------------------------------------------------
 
+_CARPETAS_EXCLUIDAS = {"papelero", "papelera"}  # basura descartada a mano, no borrada de Drive
+
+
 def _listar_archivos(folder_id):
-    """Todos los archivos (no carpetas) bajo `folder_id`, recursivo."""
+    """Todos los archivos (no carpetas) bajo `folder_id`, recursivo.
+
+    Salvo las subcarpetas de "papelero"/"papelera": ahi la gente deja
+    archivos viejos o duplicados que no quiere borrar del todo, pero que
+    tampoco deberian entrar al corpus de Iris.
+    """
     pendientes, vistas, salida = [folder_id], set(), []
     while pendientes:
         actual = pendientes.pop()
@@ -133,7 +157,8 @@ def _listar_archivos(folder_id):
             data = _get("/files", params)
             for f in data.get("files", []):
                 if f.get("mimeType") == MIME_FOLDER:
-                    pendientes.append(f["id"])
+                    if (f.get("name") or "").strip().lower() not in _CARPETAS_EXCLUIDAS:
+                        pendientes.append(f["id"])
                 else:
                     salida.append(f)
             token = data.get("nextPageToken")
@@ -151,8 +176,17 @@ def _contenido(archivo):
         return _get(f"/files/{archivo['id']}/export",
                     {"mimeType": "text/markdown"}, binario=True), ".md"
 
+    if mime == MIME_SHEET:
+        # .strip(): el nombre de una Sheet en Drive a veces trae espacios
+        # de mas al final (asi quedo "Turnos Tanica y Digital  ", con doble
+        # espacio) y una comparacion exacta los tomaria como hojas distintas.
+        if nombre.strip() not in settings.DRIVE_HOJAS_PERMITIDAS:
+            return None  # no esta en la lista explicita: puede traer PII
+        return _get(f"/files/{archivo['id']}/export",
+                    {"mimeType": "text/csv"}, binario=True), ".csv"
+
     if mime.startswith("application/vnd.google-apps"):
-        return None  # Sheets, Slides, formularios, etc.
+        return None  # Slides, formularios, etc.
 
     ext = Path(nombre).suffix.lower()
     if ext not in BINARIAS_OK:

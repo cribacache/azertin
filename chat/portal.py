@@ -8,13 +8,16 @@ qué, con la vista cruzada contra BUK que el admin genérico no da.
 
 import functools
 
+from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.http import HttpResponseForbidden
 from django.shortcuts import redirect, render
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods
 
 from . import buk
-from .models import EventoSeguridad, PerfilUsuario
+from .models import EventoSeguridad, InvitacionRol, PerfilUsuario
 
 User = get_user_model()
 
@@ -39,24 +42,81 @@ def _directorio_por_email():
     return por_email, directorio
 
 
+# Subir a "gerencia" (acceso total) queda reservado a superusuarios: un staff
+# comun administra ejecutivo/sin_acceso, no reparte god-mode.
+_ERROR_GERENCIA = "Solo un superusuario puede asignar el rol gerencia."
+
+
+def _gerencia_sin_permiso(request, rol):
+    return rol == PerfilUsuario.GERENCIA and not request.user.is_superuser
+
+
+def _cambiar_rol(request):
+    uid = request.POST.get("usuario_id")
+    rol = request.POST.get("rol")
+    objetivo = User.objects.filter(pk=uid).first()
+    if _gerencia_sin_permiso(request, rol):
+        return HttpResponseForbidden(_ERROR_GERENCIA)
+    if objetivo and rol in dict(PerfilUsuario.ROLES):
+        perfil, _ = PerfilUsuario.objects.get_or_create(usuario=objetivo)
+        perfil.rol = rol
+        perfil.actualizado_por = request.user
+        perfil.save(update_fields=["rol", "actualizado_por", "actualizado_en"])
+    return redirect("portal-usuarios")
+
+
+def _invitar(request):
+    """Deja un rol listo de antemano para un correo del dominio, sin esperar
+    a que esa persona inicie sesion por primera vez. Si ya existe una cuenta
+    con ese correo (ya inicio sesion alguna vez), el rol se aplica directo en
+    vez de dejarlo pendiente -no tiene sentido esperar un "primer login" que
+    ya paso."""
+    email = (request.POST.get("email") or "").strip().lower()
+    rol = request.POST.get("rol")
+    dominio = f"@{settings.GOOGLE_WORKSPACE_DOMAIN.lower()}"
+
+    if _gerencia_sin_permiso(request, rol):
+        return HttpResponseForbidden(_ERROR_GERENCIA)
+    if rol not in dict(PerfilUsuario.ROLES):
+        messages.error(request, "Rol invalido.")
+        return redirect("portal-usuarios")
+    if not email or not email.endswith(dominio):
+        messages.error(request, f"El correo tiene que ser del dominio {dominio}.")
+        return redirect("portal-usuarios")
+
+    existente = User.objects.filter(email__iexact=email).first()
+    if existente:
+        perfil, _ = PerfilUsuario.objects.get_or_create(usuario=existente)
+        perfil.rol = rol
+        perfil.actualizado_por = request.user
+        perfil.save(update_fields=["rol", "actualizado_por", "actualizado_en"])
+        messages.success(request, f"{email} ya tenía cuenta: se le asignó el rol directo.")
+    else:
+        InvitacionRol.objects.update_or_create(
+            email=email, defaults={"rol": rol, "creada_por": request.user})
+        messages.success(
+            request, f"Listo: {email} va a entrar con ese rol apenas inicie sesión.")
+    return redirect("portal-usuarios")
+
+
+def _cancelar_invitacion(request):
+    InvitacionRol.objects.filter(pk=request.POST.get("invitacion_id")).delete()
+    return redirect("portal-usuarios")
+
+
+_ACCIONES_POST = {
+    "invitar": _invitar,
+    "cancelar_invitacion": _cancelar_invitacion,
+}
+
+
+@never_cache
 @_solo_staff
 @require_http_methods(["GET", "POST"])
 def usuarios(request):
     if request.method == "POST":
-        uid = request.POST.get("usuario_id")
-        rol = request.POST.get("rol")
-        objetivo = User.objects.filter(pk=uid).first()
-        # Subir a "gerencia" (acceso total) queda reservado a superusuarios: un
-        # staff comun administra ejecutivo/sin_acceso, no reparte god-mode.
-        if rol == PerfilUsuario.GERENCIA and not request.user.is_superuser:
-            return HttpResponseForbidden(
-                "Solo un superusuario puede asignar el rol gerencia.")
-        if objetivo and rol in dict(PerfilUsuario.ROLES):
-            perfil, _ = PerfilUsuario.objects.get_or_create(usuario=objetivo)
-            perfil.rol = rol
-            perfil.actualizado_por = request.user
-            perfil.save(update_fields=["rol", "actualizado_por", "actualizado_en"])
-        return redirect("portal-usuarios")
+        accion = _ACCIONES_POST.get(request.POST.get("accion"), _cambiar_rol)
+        return accion(request)
 
     por_email, directorio = _directorio_por_email()
     perfiles = {p.usuario_id: p for p in PerfilUsuario.objects.all()}
@@ -91,9 +151,12 @@ def usuarios(request):
         "roles": roles,
         "buk_ok": bool(directorio),
         "rol_defecto": PerfilUsuario.ROL_DEFECTO,
+        "invitaciones": InvitacionRol.objects.all(),
+        "dominio": settings.GOOGLE_WORKSPACE_DOMAIN,
     })
 
 
+@never_cache
 @_solo_staff
 @require_http_methods(["GET"])
 def eventos(request):

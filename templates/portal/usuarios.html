@@ -12,6 +12,53 @@ entra como <strong>{{ rol_defecto }}</strong> (acceso acotado).{% endblock %}
       pero los roles se pueden cambiar igual.</div>
   {% endif %}
 
+  {% if messages %}
+    {% for mensaje in messages %}
+      <div class="aviso{% if mensaje.tags == 'success' %} aviso-ok{% endif %}">{{ mensaje }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <section class="invitar">
+    <h2>Darle rol a alguien antes de que entre</h2>
+    <p class="tenue">Para no esperar a que alguien inicie sesión por primera vez
+      (entra como {{ rol_defecto }}) para recién ahí subirle el rol.</p>
+    <form method="post" class="invitar-form">
+      {% csrf_token %}
+      <input type="hidden" name="accion" value="invitar">
+      <input type="email" name="email" placeholder="nombre@{{ dominio }}" required>
+      <select name="rol">
+        {% for valor, etiqueta in roles %}
+          <option value="{{ valor }}">{{ etiqueta }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit">Dejar listo</button>
+    </form>
+
+    {% if invitaciones %}
+      <table class="invitaciones">
+        <thead>
+          <tr><th>Correo</th><th>Rol al entrar</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for inv in invitaciones %}
+            <tr>
+              <td>{{ inv.email }}</td>
+              <td><span class="pill {{ inv.rol }}">{{ inv.rol }}</span></td>
+              <td>
+                <form method="post" class="rol-form">
+                  {% csrf_token %}
+                  <input type="hidden" name="accion" value="cancelar_invitacion">
+                  <input type="hidden" name="invitacion_id" value="{{ inv.pk }}">
+                  <button type="submit">Cancelar</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </section>
+
   <table>
     <thead>
       <tr>

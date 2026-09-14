@@ -41,10 +41,11 @@ def _carpeta():
         return Path(settings.DRIVE_CACHE_DIR)
     return Path(settings.DOCUMENTOS_DIR)
 
-# La planilla de cuentas (.xlsx) NO va aca a proposito: trae RUTs y horas
-# contractuales. Se lee estructurada en chat/cuentas.py, que solo toma la
-# cuenta y el RUT como llave de cruce. Agregar ".xlsx" meteria esos datos al
-# corpus de busqueda y podrian aparecer citados en una respuesta.
+# Ni ".xlsx" ni ".csv" van aca a proposito: son tablas de una fila por
+# persona (cuentas con RUT, turnos), y una tabla de ~90 filas partida en
+# fragmentos de texto libre puede devolver la fila de otra persona -se
+# probo en la practica con la tabla de turnos, ver chat/turnos.py. Se leen
+# estructuradas, por columna, en chat/cuentas.py y chat/turnos.py.
 EXTENSIONES = (".md", ".txt", ".pdf", ".docx")
 IGNORADOS = ("leeme", "readme")  # documentacion del repo, no contenido consultable
 MINIMO_SECCION = 120  # menos que esto es un encabezado, no una respuesta

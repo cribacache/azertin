@@ -109,6 +109,14 @@ DRIVE_SYNC_TTL = int(os.getenv("DRIVE_SYNC_TTL", "300"))
 DRIVE_OMITIR_SOSPECHOSOS = os.getenv("DRIVE_OMITIR_SOSPECHOSOS", "True").lower() == "true"
 DRIVE_DOC_ANTIPROMPT_UMBRAL = int(os.getenv("DRIVE_DOC_ANTIPROMPT_UMBRAL", "2"))
 
+# Nombres exactos (tal cual figuran en Drive) de las Google Sheets nativas que
+# SI entran al corpus, exportadas a CSV. Vacio por defecto: la carpeta
+# tambien tiene hojas con RUT/telefono/email/cumpleanos de cada persona (la
+# base de BUK, vacaciones) que nunca deben quedar citables en el chat -cada
+# hoja se suma a mano, nunca "todas las que haya".
+DRIVE_HOJAS_PERMITIDAS = {n.strip() for n in
+                          os.getenv("DRIVE_HOJAS_PERMITIDAS", "").split(",") if n.strip()}
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     # Sirve /static/ directamente desde gunicorn (Cloud Run no tiene un CDN
@@ -136,6 +144,14 @@ MIDDLEWARE = [
 ]
 
 X_FRAME_OPTIONS = "DENY"
+
+# La sesion no sobrevive a cerrar el navegador (todas las ventanas, no una
+# pestaña puntual: eso no lo distingue ningun navegador de forma confiable).
+# Sin esto la cookie de sesion queda viva semanas -el default de Django- y
+# alguien puede seguir con permisos, cache de plantillas, etc. de hace rato
+# aunque el staff ya le haya cambiado el rol en /portal/. Volver a entrar
+# tras cerrar el navegador siempre pide login de Google de nuevo.
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 
 # ---------------------------------------------------------------------------
 # Endurecimiento para produccion.

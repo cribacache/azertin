@@ -70,6 +70,26 @@ html, body { background: #eef0f4; color: #1b1d29; }
   border-radius: 8px;
   margin-bottom: 18px;
 }
+.portal .aviso-ok { background: #e6f3e7; color: #2f7d32; }
+.portal .invitar {
+  background: #f7f8fc;
+  border: 1px solid #e2e4ec;
+  border-radius: 10px;
+  padding: 16px 18px;
+  margin-bottom: 24px;
+}
+.portal .invitar h2 { font-size: 1rem; margin: 0 0 4px; }
+.portal .invitar .tenue { margin: 0 0 12px; }
+.portal .invitar-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.portal .invitar-form input[type="email"] {
+  flex: 1;
+  min-width: 220px;
+  padding: 5px 8px;
+  border: 1px solid #c7cad8;
+  border-radius: 6px;
+  font: inherit;
+}
+.portal table.invitaciones { margin-top: 14px; }
 .portal .filtros { margin-bottom: 16px; font-size: .88rem; }
 .portal .filtros a { color: #5b5f73; text-decoration: none; margin-right: 14px; }
 .portal .filtros a.activo { color: #14162a; font-weight: 700; }

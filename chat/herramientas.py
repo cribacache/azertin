@@ -7,7 +7,7 @@ reglas. Lo que no pase por aca, el modelo no lo puede ver ni inventar.
 
 from datetime import date, timedelta
 
-from . import buk, cuentas, documentos, intents, personas
+from . import buk, cuentas, documentos, intents, personas, turnos
 
 MAX_PERSONAS = 60  # techo para no mandar listados enormes al modelo
 
@@ -381,6 +381,46 @@ def beneficios_de_persona(nombre):
     }
 
 
+def turno_de_persona(nombre):
+    """Turno, modalidad y puesto de una persona, desde la planilla de turnos.
+
+    BUK no tiene este dato: vive aparte (chat/turnos.py). Resuelve el nombre
+    contra la nomina de BUK igual que el resto de las herramientas
+    "de_persona", y despues cruza por nombre con esa planilla.
+    """
+    directorio, _ = buk.directorio()
+    ids, _ = personas.buscar(nombre or "", directorio)
+
+    if not ids:
+        return {"encontrada": False, "motivo": "No hay nadie con ese nombre en la nomina activa."}
+    if len(ids) > 1:
+        return {
+            "encontrada": False,
+            "motivo": "El nombre coincide con varias personas.",
+            "candidatos": sorted(directorio[i]["nombre"] for i in ids)[:8],
+        }
+
+    persona = directorio[next(iter(ids))]
+    fila = turnos.buscar(persona["nombre"])
+    if fila is None:
+        return {
+            "encontrada": True,
+            "nombre": persona["nombre"],
+            "turno_registrado": False,
+            "motivo": "Esta persona no aparece en la planilla de turnos.",
+        }
+    return {
+        "encontrada": True,
+        "turno_registrado": True,
+        "nombre": persona["nombre"],
+        "area": fila["area"] or None,
+        "forma_trabajo": fila["forma_trabajo"] or None,
+        "modalidad": fila["modalidad"] or None,
+        "puesto": fila["puesto"] if fila["puesto"] not in ("", "-") else None,
+        "observacion": fila["observacion"] or None,
+    }
+
+
 def buscar_politica(consulta):
     """Busca en los documentos internos (politicas, procedimientos)."""
     from .antiprompt import NOTA_DOCUMENTO
@@ -414,6 +454,7 @@ FUNCIONES = {
     "listar_cuentas": listar_cuentas,
     "listar_beneficios": listar_beneficios,
     "beneficios_de_persona": beneficios_de_persona,
+    "turno_de_persona": turno_de_persona,
     "buscar_politica": buscar_politica,
 }
 
@@ -631,6 +672,23 @@ ESQUEMAS = [
                 "esta cada solicitud (aprobado, en proceso, etc). Usar cuando "
                 "la pregunta nombra a alguien: 'que beneficios tiene X', "
                 "'le aprobaron el dia libre de cumpleanos a X'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"nombre": {"type": "string"}},
+                "required": ["nombre"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "turno_de_persona",
+            "description": (
+                "Turno (permanente, turno 1, turno 2), modalidad (presencial, "
+                "hibrido) y puesto asignado de UNA persona, desde la planilla "
+                "de turnos. Usar para 'que turno tiene X', 'X es presencial o "
+                "hibrido', 'en que puesto se sienta X'."
             ),
             "parameters": {
                 "type": "object",

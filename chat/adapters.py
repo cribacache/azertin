@@ -42,3 +42,31 @@ class SoloAzertaSocialAdapter(DefaultSocialAccountAdapter):
                 f"Iniciaste sesión con {email or 'una cuenta que no pude leer'}.",
             )
             raise ImmediateHttpResponse(redirect("account_login"))
+
+    def save_user(self, request, sociallogin, form=None):
+        """Aplica una InvitacionRol pendiente para este correo, si hay una.
+
+        Solo se llama en el ALTA de la cuenta (primer login de esa persona),
+        nunca en logins siguientes: es justo cuando el `User` recien se crea
+        y `PerfilUsuario` puede referenciarlo. Si nadie dejo una invitacion,
+        no hace nada distinto y la persona entra con el rol por defecto,
+        como siempre.
+        """
+        usuario = super().save_user(request, sociallogin, form)
+        self._aplicar_invitacion(usuario)
+        return usuario
+
+    @staticmethod
+    def _aplicar_invitacion(usuario):
+        from .models import InvitacionRol, PerfilUsuario
+
+        email = (usuario.email or "").strip().lower()
+        if not email:
+            return
+        invitacion = InvitacionRol.objects.filter(email=email).first()
+        if invitacion is None:
+            return
+        PerfilUsuario.objects.update_or_create(
+            usuario=usuario, defaults={"rol": invitacion.rol}
+        )
+        invitacion.delete()
