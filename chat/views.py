@@ -274,9 +274,19 @@ def chat_message(request):
         })
 
     ambito = perfil.ambito_cache(ctx)
+    historial_modelo = request.session.get("historial_modelo")
+    alias_modelo = request.session.get("alias_modelo")
+    # El cache es por texto del mensaje: "sí, confírmalo" o "el título es X"
+    # significan cosas completamente distintas segun la conversacion, asi que
+    # solo se puede servir/guardar del cache el PRIMER mensaje de una
+    # conversacion (sin historial en la sesion), nunca un seguimiento. Sin
+    # esto, un seguimiento corto y comun (frecuente al reservar una sala)
+    # podia responderse con la respuesta cacheada de una conversacion previa
+    # de otra persona, sin relacion con lo que se esta hablando ahora.
+    es_primer_mensaje = not historial_modelo
 
     # Misma pregunta el mismo dia y mismo alcance: se sirve del cache.
-    cacheada = respuestas.obtener(mensaje, hoy, ambito)
+    cacheada = respuestas.obtener(mensaje, hoy, ambito) if es_primer_mensaje else None
     if cacheada is not None:
         cacheada = dict(cacheada)
         cacheada["meta"] = {**cacheada.get("meta", {}), "desde_cache": True,
@@ -291,9 +301,6 @@ def chat_message(request):
             "answer": "Alcanzaste el máximo de consultas por hoy. Vuelve a intentar mañana.",
             "items": [], "meta": {"intencion": "presupuesto", "requests_buk": 0},
         })
-
-    historial_modelo = request.session.get("historial_modelo")
-    alias_modelo = request.session.get("alias_modelo")
 
     del_modelo = responder_con_modelo(mensaje, historial_modelo, alias_modelo, ctx)
     if del_modelo:
@@ -313,6 +320,7 @@ def chat_message(request):
         request.session["alias_modelo"] = nuevo_alias or {}
 
     respuesta["meta"]["desde_cache"] = False
-    respuestas.guardar(mensaje, hoy, respuesta, ambito)
+    if es_primer_mensaje:
+        respuestas.guardar(mensaje, hoy, respuesta, ambito)
     contar(mensaje, respuesta["meta"].get("intencion"))
     return JsonResponse(respuesta)

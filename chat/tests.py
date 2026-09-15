@@ -280,27 +280,32 @@ class CacheRespuestasTests(TestCase):
     def setUp(self):
         cache.clear()
 
-    def _preguntar_con_modelo(self, texto, mock_cliente):
+    def _preguntar_con_modelo(self, texto, mock_cliente, cliente=None):
         generar = mock_cliente.return_value.models.generate_content
         generar.side_effect = [
             _respuesta_gemini(llamadas=[_PedidoGemini(
                 "listar_ausencias", {"desde": _f(0), "hasta": _f(0)})]),
             _respuesta_gemini(texto="Hay 3 personas fuera hoy."),
         ]
-        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
-                                content_type="application/json").json()
+        return (cliente or self.client).post(
+            "/api/chat/", data=json.dumps({"message": texto}),
+            content_type="application/json").json()
 
-    def _preguntar(self, texto):
-        return self.client.post("/api/chat/", data=json.dumps({"message": texto}),
-                                content_type="application/json").json()
+    def _preguntar(self, texto, cliente=None):
+        return (cliente or self.client).post(
+            "/api/chat/", data=json.dumps({"message": texto}),
+            content_type="application/json").json()
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     @patch("chat.asistente._cliente_gemini")
     def test_la_segunda_vez_no_consulta_buk_ni_al_modelo(self, mock_cliente, mocked):
+        """El cache es para que MUCHAS PERSONAS distintas compartan la misma
+        respuesta el mismo dia (sesiones nuevas, no el propio historial de la
+        conversacion: ver test_no_sirve_del_cache_a_un_seguimiento)."""
         self._preguntar_con_modelo("quien esta fuera hoy", mock_cliente)
         llamadas_buk = len(mocked.call_args_list)
         llamadas_modelo = mock_cliente.return_value.models.generate_content.call_count
-        cuerpo = self._preguntar("quien esta fuera hoy")
+        cuerpo = self._preguntar("quien esta fuera hoy", cliente=_ClienteAutenticado())
         self.assertTrue(cuerpo["meta"]["desde_cache"])
         self.assertEqual(cuerpo["meta"]["requests_buk"], 0)
         self.assertEqual(len(mocked.call_args_list), llamadas_buk)          # sin red nueva
@@ -314,7 +319,8 @@ class CacheRespuestasTests(TestCase):
         self.assertFalse(primera["meta"]["desde_cache"])
         for variante in ("¿Quién está fuera hoy?", "QUIEN ESTA FUERA HOY!!",
                          "  quien   esta  fuera  hoy  "):
-            self.assertTrue(self._preguntar(variante)["meta"]["desde_cache"], variante)
+            cuerpo = self._preguntar(variante, cliente=_ClienteAutenticado())
+            self.assertTrue(cuerpo["meta"]["desde_cache"], variante)
 
     def test_no_cachea_entre_dias_distintos(self):
         """La respuesta a "hoy" no puede servirse manana."""
@@ -329,7 +335,7 @@ class CacheRespuestasTests(TestCase):
         mock_cliente.return_value.models.generate_content.return_value = _respuesta_gemini(
             texto="NO_SE: no tengo ese dato.")
         self._preguntar("cuanto es el aguinaldo?")
-        cuerpo = self._preguntar("cuanto es el aguinaldo?")
+        cuerpo = self._preguntar("cuanto es el aguinaldo?", cliente=_ClienteAutenticado())
         self.assertFalse(cuerpo["meta"]["desde_cache"])
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
@@ -338,10 +344,42 @@ class CacheRespuestasTests(TestCase):
         from chat.models import Pregunta
         self._preguntar_con_modelo("quien esta fuera hoy", mock_cliente)
         for _ in range(2):
-            self._preguntar("quien esta fuera hoy")
+            self._preguntar("quien esta fuera hoy", cliente=_ClienteAutenticado())
         fila = Pregunta.objects.get(mensaje_normalizado__contains="fuera hoy")
         self.assertEqual(fila.veces, 3)
         self.assertEqual(fila.veces_cache, 2)  # la primera no vino de cache
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_no_sirve_del_cache_a_un_seguimiento(self, mock_cliente, mocked):
+        """Bug real reportado: "el titulo es X" o "si, confirmalo" significan
+        cosas distintas segun la conversacion. Si esto se sirviera del cache
+        por el solo texto del mensaje, un seguimiento corto y comun (tipico al
+        reservar una sala) podia contestarse con la respuesta cacheada de una
+        conversacion previa de otra persona, sin ninguna relacion con lo que
+        se esta hablando ahora -literalmente repreguntando o desviandose del
+        tema en vez de continuar la reserva.
+
+        Se prueba con listar_ausencias (no con salas) porque el bug es
+        general: cualquier respuesta que dependa del historial es insegura de
+        cachear por texto solo, use o no una herramienta de salas.
+        """
+        # deja cacheada una respuesta para el texto "y el segundo?" en una
+        # conversacion previa, de otra persona (self.client, ambito por
+        # defecto: misma pregunta la puede haber hecho cualquiera)
+        self._preguntar_con_modelo("y el segundo?", mock_cliente)
+
+        # ahora, alguien mas, a mitad de SU PROPIA conversacion (con
+        # historial), manda el mismo texto: no debe servirse el cache de la
+        # conversacion ajena de arriba.
+        cliente = _ClienteAutenticado()
+        self._preguntar_con_modelo("quien esta fuera esta semana", mock_cliente, cliente=cliente)
+        mock_cliente.return_value.models.generate_content.side_effect = None
+        mock_cliente.return_value.models.generate_content.return_value = _respuesta_gemini(
+            texto="Respuesta real de ESTA conversacion, no la cacheada.")
+        cuerpo = self._preguntar("y el segundo?", cliente=cliente)
+        self.assertFalse(cuerpo["meta"]["desde_cache"])
+        self.assertEqual(cuerpo["answer"], "Respuesta real de ESTA conversacion, no la cacheada.")
 
 
 @SIN_DOCUMENTOS
