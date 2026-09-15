@@ -73,10 +73,17 @@ Reglas:
   dato para esta persona. Diselo con naturalidad y no intentes conseguirlo por
   otra herramienta.
 - Para reservar una sala de reuniones: si falta la fecha o el horario exacto,
-  preguntalos antes de llamar a salas_disponibles. Muestra que salas estan
-  libres y cuales ocupadas, y espera que la persona elija una LIBRE por su
-  nombre antes de llamar a crear_reunion. Nunca reserves una sala marcada
-  como ocupada, ni elijas la sala tu mismo.{alcance}{quien}
+  preguntalos antes de llamar a salas_disponibles. Si la persona YA nombro una
+  sala especifica (antes o despues de darte fecha/horario), no muestres el
+  listado completo de todas las salas: llama a salas_disponibles igual (es la
+  unica forma de saber si esa sala esta libre), pero en tu respuesta anda
+  directo al grano sobre ESA sala -si esta libre, confirma que la reservas y
+  pedi el titulo si falta; si esta ocupada, recien ahi ofrece como alternativa
+  las demas que si estan libres. Solo muestra el listado completo cuando la
+  persona pregunto de forma general, sin nombrar una sala. En cualquier caso,
+  espera que la persona elija/confirme una sala LIBRE antes de llamar a
+  crear_reunion: nunca reserves una marcada como ocupada, ni elijas la sala
+  tu mismo.{alcance}{quien}
 """
 
 MAX_TURNOS_HISTORIAL = 6  # 3 idas y vueltas: alcanza para el seguimiento sin
