@@ -85,13 +85,15 @@ def _es_sala_de_reuniones(recurso):
     (estacionamientos, equipos, etc).
 
     `resourceCategory` es el campo pensado para esto ("CONFERENCE_ROOM"), pero
-    un recurso creado hace tiempo puede no tenerlo seteado: para esos, se cae
-    al texto libre de `resourceType` (lo que se ve en la ficha de la sala en
-    Calendar, ej. "Sala de Reuniones").
+    en el Workspace real de Azerta viene "CATEGORY_UNKNOWN" hasta en las salas
+    de verdad (confirmado con una llamada real a Directory, no solo en la
+    documentacion): no alcanza con chequear ese campo. Por eso, salvo que
+    venga explicitamente "CONFERENCE_ROOM", se decide por el texto libre de
+    `resourceType` (lo que se ve en la ficha de la sala en Calendar, ej.
+    "Sala de Reuniones" vs "Estacionamientos").
     """
-    categoria = (recurso.get("resourceCategory") or "").upper()
-    if categoria:
-        return categoria == "CONFERENCE_ROOM"
+    if (recurso.get("resourceCategory") or "").upper() == "CONFERENCE_ROOM":
+        return True
     tipo = (recurso.get("resourceType") or "").lower()
     return "sala" in tipo or "reunion" in tipo or "reunión" in tipo
 
@@ -196,6 +198,13 @@ def crear_reunion(organizador_email, sala_nombre, fecha, hora_inicio, hora_fin, 
     Vuelve a chequear disponibilidad pegado a la creacion (no confia en una
     consulta de `disponibilidad` de hace un rato): entre que se mostro la
     lista y la persona eligio, alguien mas pudo haber reservado esa sala.
+
+    Esto no es una garantia perfecta: probado contra el Workspace real, el
+    freebusy de una sala tarda unos segundos (no al toque) en reflejar un
+    evento recien creado. Dos reservas de la misma sala a los pocos segundos
+    una de la otra podrian igual pisarse; en el uso conversacional real
+    (alguien pregunta, lee, recien ahi confirma) ese margen no alcanza a
+    importar.
     """
     from googleapiclient.discovery import build
 

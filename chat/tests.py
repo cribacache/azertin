@@ -443,6 +443,16 @@ class SalasTests(TestCase):
         self.assertTrue(salas._es_sala_de_reuniones({"resourceType": "Sala de Reuniones"}))
         self.assertFalse(salas._es_sala_de_reuniones({"resourceType": "Estacionamientos"}))
 
+    def test_category_unknown_tambien_decide_por_el_texto_del_tipo(self):
+        """Confirmado con una llamada real a Directory: en el Workspace de
+        Azerta las salas de verdad traen resourceCategory="CATEGORY_UNKNOWN",
+        no "CONFERENCE_ROOM" (ver chat/salas.py::_es_sala_de_reuniones)."""
+        from chat import salas
+        self.assertTrue(salas._es_sala_de_reuniones(
+            {"resourceCategory": "CATEGORY_UNKNOWN", "resourceType": "Sala de Reuniones"}))
+        self.assertFalse(salas._es_sala_de_reuniones(
+            {"resourceCategory": "OTHER", "resourceType": "Estacionamientos"}))
+
     def test_rango_exige_fin_despues_del_inicio(self):
         from chat import salas
         with self.assertRaises(salas.SalasError):
