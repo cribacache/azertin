@@ -83,12 +83,14 @@ body::after {
 
 .brand span {
   position: absolute;
-  top: -5px;
-  right: -14px;
+  top: -2px;
+  right: -36px;
   color: var(--rosado);
-  font-size: 20px;
+  font-size: 12px;
   font-weight: 700;
-  transform: skew(-12deg);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  transform: skew(-8deg);
 }
 
 .brand:focus-visible { outline: 2px solid var(--rosado); outline-offset: 6px; border-radius: 3px; }
@@ -415,6 +417,19 @@ body::after {
 .composer button:focus-visible { outline: 2px solid var(--claro); outline-offset: 3px; }
 
 .send-arrow { display: inline-block; transition: transform .2s ease; }
+
+/* ---------- pie: aviso de fase beta ---------- */
+.pie {
+  flex: none;
+  text-align: center;
+  padding-top: 4px;
+}
+
+.pie p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--gris-claro);
+}
 
 /* ---------- pagina de propuestas ---------- */
 .shell-angosto { max-width: 560px; justify-content: center; gap: 28px; }

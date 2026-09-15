@@ -188,7 +188,12 @@ class ConsultaNoResuelta(models.Model):
 
 
 def registrar(mensaje, motivo="sin_intencion"):
-    """Guarda la consulta, agrupando las repeticiones en una sola fila."""
+    """Guarda la consulta, agrupando las repeticiones en una sola fila.
+
+    Devuelve la fila con `veces` YA actualizado: quien llama (chat/views.py,
+    para decidir si todavia vale la pena sugerir una reformulacion) necesita
+    el conteo real, no el que tenia el objeto antes del update con F().
+    """
     from chat.intents import normalizar
 
     clave = normalizar(mensaje)[:500]
@@ -200,6 +205,7 @@ def registrar(mensaje, motivo="sin_intencion"):
         ConsultaNoResuelta.objects.filter(pk=fila.pk).update(
             veces=models.F("veces") + 1, motivo=motivo, resuelta=False
         )
+        fila.refresh_from_db()
     return fila
 
 

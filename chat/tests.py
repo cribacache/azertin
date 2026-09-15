@@ -209,6 +209,15 @@ class HerramientasTests(TestCase):
         self.assertFalse(datos["encontrada"])
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_info_persona_incluye_el_correo(self, mocked):
+        """Decision explicita: el correo corporativo SI se expone (a
+        diferencia del rut), ver chat/buk.py::CAMPOS_PUBLICOS."""
+        from chat import herramientas
+        datos = herramientas.info_persona("Luis")
+        self.assertTrue(datos["encontrada"])
+        self.assertEqual(datos["email"], "luis@azerta.cl")
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
     def test_dotacion_cuenta_activos(self, mocked):
         from chat import herramientas
         self.assertEqual(herramientas.dotacion(), {"personas_activas": 2})
@@ -431,6 +440,39 @@ class GeminiTests(TestCase):
         ]
         cuerpo = self._preguntar("hazme un resumen de la carga del equipo")
         self.assertIn("Ana", cuerpo["answer"])
+
+    @override_settings(ASISTENTE_ANONIMIZAR=True)
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_el_correo_tambien_se_anonimiza_antes_de_mandarlo(self, mock_cliente, mock_buk):
+        """Si solo se anonimizara el nombre y el correo real viajara igual,
+        la proteccion no serviria de nada: el correo identifica a la persona
+        tan directo como el nombre. El numero del seudonimo del correo no
+        tiene por que coincidir con el del nombre (son entradas separadas del
+        mismo alias compartido), asi que este test lee el seudonimo real en
+        vez de adivinarlo."""
+        llamadas = {"n": 0}
+
+        def responder(*args, **kwargs):
+            llamadas["n"] += 1
+            if llamadas["n"] == 1:
+                return _respuesta_gemini(
+                    llamadas=[_PedidoGemini("info_persona", {"nombre": "Luis"})])
+            # la respuesta de la herramienta que Gemini recibe de vuelta:
+            # str(contents) trunca los dicts anidados ("<dict len=6>"), asi
+            # que se accede al objeto real en vez de al texto.
+            enviado = kwargs["contents"][-1].parts[0].function_response.response
+            self.assertNotEqual(enviado.get("email"), "luis@azerta.cl")
+            seudonimo = enviado["email"]
+            return _respuesta_gemini(texto=f"El correo de Persona 1 es {seudonimo}.")
+
+        mock_cliente.return_value.models.generate_content.side_effect = responder
+
+        cuerpo = self._preguntar("cual es el correo de luis?")
+
+        # la respuesta final SI trae el correo real: se restituye igual que
+        # un nombre (chat/asistente.py::_restaurar)
+        self.assertIn("luis@azerta.cl", cuerpo["answer"])
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     @patch("chat.asistente._cliente_gemini")
@@ -1710,6 +1752,117 @@ class TurnosTests(TestCase):
         self.assertEqual(resultado["area"], "Asuntos Publicos")
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_turno_de_persona_presencial_siempre_para_permanente(self, mocked):
+        """"Presencial" (forma de trabajo "Permanente") no varia semana a
+        semana: no hace falta Hoja 2 para saberlo."""
+        from chat import herramientas
+        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
+            resultado = herramientas.turno_de_persona("Ana")
+        self.assertEqual(resultado["presencial"],
+                         {"es_presencial": True, "semana": "esta semana", "siempre": True})
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_turno_de_persona_hibrido_sin_datos_de_hoja2(self, mocked):
+        """Alguien hibrido con turno rotativo, pero sin Hoja 2 disponible
+        (aca, DOCUMENTOS_FUENTE=local): no se puede saber si ESTA semana
+        puntual le toca presencial."""
+        from chat import herramientas
+        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
+            resultado = herramientas.turno_de_persona("Juan Soto")
+        self.assertIsNone(resultado["presencial"])
+
+
+class SemanasPresencialesTests(TestCase):
+    """chat/turnos.py: que semana le toca presencial a un turno rotativo
+    (Hoja 2 de la planilla de turnos), y como nombrar esa semana."""
+
+    def setUp(self):
+        cache.clear()
+
+    def test_fecha_hoja2_parsea_el_formato_de_la_planilla(self):
+        from chat import turnos
+        self.assertEqual(turnos._fecha_hoja2("21-sept-2026"), date(2026, 9, 21))
+        self.assertEqual(turnos._fecha_hoja2("4-ene-2027"), date(2027, 1, 4))
+        self.assertEqual(turnos._fecha_hoja2(" 1-mar-2027 "), date(2027, 3, 1))
+
+    def test_fecha_hoja2_none_si_no_calza(self):
+        from chat import turnos
+        self.assertIsNone(turnos._fecha_hoja2("Turno 1"))
+        self.assertIsNone(turnos._fecha_hoja2(""))
+        self.assertIsNone(turnos._fecha_hoja2("32-ene-2027"))
+
+    def test_semana_relativa(self):
+        from chat import turnos
+        hoy = date(2026, 9, 15)  # martes
+        self.assertEqual(turnos._semana_relativa(date(2026, 9, 17), hoy), "esta semana")
+        self.assertEqual(turnos._semana_relativa(date(2026, 9, 22), hoy), "la próxima semana")
+        self.assertEqual(turnos._semana_relativa(date(2026, 9, 8), hoy), "la semana pasada")
+        self.assertEqual(turnos._semana_relativa(date(2026, 10, 6), hoy),
+                         "la semana del 5 de octubre")
+
+    @override_settings(DOCUMENTOS_FUENTE="drive")
+    @patch("chat.drive.valores_de_hoja")
+    @patch("chat.drive.id_de_archivo", return_value="sheet-id-123")
+    def test_semanas_presenciales_arma_un_set_por_turno(self, mock_id, mock_valores):
+        from chat import turnos
+        mock_valores.return_value = [
+            ["Turno 2", "21-sept-2026", "5-oct-2026"],
+            ["Turno 1", "14-sept-2026", "28-sept-2026"],
+        ]
+        semanas = turnos._semanas_presenciales(forzar=True)
+        self.assertEqual(semanas["turno 1"], {date(2026, 9, 14), date(2026, 9, 28)})
+        self.assertEqual(semanas["turno 2"], {date(2026, 9, 21), date(2026, 10, 5)})
+        mock_id.assert_called_once_with(turnos.NOMBRE_EN_DRIVE)
+        mock_valores.assert_called_once_with("sheet-id-123", turnos.NOMBRE_HOJA_SEMANAS)
+
+    @override_settings(DOCUMENTOS_FUENTE="local")
+    def test_semanas_presenciales_vacio_sin_drive(self):
+        from chat import turnos
+        self.assertEqual(turnos._semanas_presenciales(forzar=True), {})
+
+    @override_settings(DOCUMENTOS_FUENTE="drive")
+    @patch("chat.drive.id_de_archivo", side_effect=RuntimeError("Drive caido"))
+    def test_semanas_presenciales_nunca_lanza(self, mock_id):
+        from chat import turnos
+        self.assertEqual(turnos._semanas_presenciales(forzar=True), {})
+
+    def test_info_presencial_permanente_siempre_true(self):
+        from chat import turnos
+        fila = {"modalidad": "Presencial", "forma_trabajo": "Permanente"}
+        resultado = turnos.info_presencial(fila, date(2026, 9, 20), hoy=date(2026, 9, 15))
+        self.assertEqual(resultado,
+                         {"es_presencial": True, "semana": "esta semana", "siempre": True})
+
+    @patch("chat.turnos._semanas_presenciales")
+    def test_info_presencial_hibrido_semana_presencial(self, mock_semanas):
+        from chat import turnos
+        mock_semanas.return_value = {"turno 1": {date(2026, 9, 14)}}
+        fila = {"modalidad": "Hibrido", "forma_trabajo": "Turno 1"}
+        resultado = turnos.info_presencial(fila, date(2026, 9, 16), hoy=date(2026, 9, 16))
+        self.assertEqual(resultado,
+                         {"es_presencial": True, "semana": "esta semana", "siempre": False})
+
+    @patch("chat.turnos._semanas_presenciales")
+    def test_info_presencial_hibrido_semana_no_presencial(self, mock_semanas):
+        from chat import turnos
+        mock_semanas.return_value = {"turno 1": {date(2026, 9, 14)}}
+        fila = {"modalidad": "Hibrido", "forma_trabajo": "Turno 1"}
+        # la semana siguiente (21 de sept) no esta en el set de turno 1
+        resultado = turnos.info_presencial(fila, date(2026, 9, 23), hoy=date(2026, 9, 16))
+        self.assertFalse(resultado["es_presencial"])
+
+    @patch("chat.turnos._semanas_presenciales", return_value={})
+    def test_info_presencial_hibrido_sin_datos_de_su_turno(self, mock_semanas):
+        from chat import turnos
+        fila = {"modalidad": "Hibrido", "forma_trabajo": "Turno 1"}
+        self.assertIsNone(turnos.info_presencial(fila, date(2026, 9, 16)))
+
+    def test_info_presencial_modalidad_desconocida(self):
+        from chat import turnos
+        fila = {"modalidad": "", "forma_trabajo": ""}
+        self.assertIsNone(turnos.info_presencial(fila, date(2026, 9, 16)))
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
     def test_turno_de_persona_sin_fila_en_la_planilla(self, mocked):
         """Existe en BUK pero no en la planilla de turnos: distinto de no
         haber encontrado a la persona."""
@@ -2085,6 +2238,63 @@ class RespuestaNoExitosaTests(TestCase):
 
         self.assertEqual(ConsultaNoResuelta.objects.count(), 0)
 
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_no_le_dice_al_usuario_que_quedo_registrada(self, mock_cliente, mock_buk):
+        """No queremos que quien pregunta sepa que su consulta se archivo: se
+        registra igual (para saber que reforzar despues), pero eso ya no se
+        le cuenta -sonaba a que el sistema archiva el pedido y sigue de
+        largo. En su lugar se muestra la sugerencia que el propio modelo
+        redacto (la regla NO_SE de asistente.INSTRUCCIONES)."""
+        mock_cliente.return_value.models.generate_content.return_value = _respuesta_gemini(
+            texto="NO_SE: ¿Te referís a alguna política de vacaciones?")
+
+        cuerpo = self.client.post(
+            "/api/chat/", data='{"message":"y las vacas?"}',
+            content_type="application/json").json()
+
+        self.assertEqual(cuerpo["answer"], "¿Te referís a alguna política de vacaciones?")
+        for frase in ("registrada", "registrar", "más adelante"):
+            self.assertNotIn(frase, cuerpo["answer"].lower())
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_tras_muchos_fallos_avisa_que_no_logra_entender(self, mock_cliente, mock_buk):
+        from chat.models import ConsultaNoResuelta
+        ConsultaNoResuelta.objects.create(
+            mensaje="que es un frulo", mensaje_normalizado="que es un frulo",
+            motivo="sin_datos", veces=5)
+        mock_cliente.return_value.models.generate_content.return_value = _respuesta_gemini(
+            texto="NO_SE: ¿Podrías darme más detalles sobre el frulo?")
+
+        cuerpo = self.client.post(
+            "/api/chat/", data='{"message":"que es un frulo"}',
+            content_type="application/json").json()
+
+        self.assertIn("no logro entender", cuerpo["answer"].lower())
+        # la sugerencia del modelo ya no vale la pena mostrarla: se repitio
+        # demasiadas veces sin entenderse
+        self.assertNotIn("frulo", cuerpo["answer"].lower())
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_el_seguimiento_a_un_no_se_sigue_la_conversacion(self, mock_cliente, mock_buk):
+        """El historial se conserva tras un NO_SE: si la persona responde a
+        la sugerencia, es el seguimiento de la misma conversacion, no un
+        mensaje suelto."""
+        generar = mock_cliente.return_value.models.generate_content
+        generar.side_effect = [
+            _respuesta_gemini(texto="NO_SE: ¿Te referís a alguna política de vacaciones?"),
+            _respuesta_gemini(texto="Las vacaciones se piden con 20 días de anticipación."),
+        ]
+        self.client.post("/api/chat/", data='{"message":"y las vacas?"}',
+                         content_type="application/json")
+        self.client.post("/api/chat/", data='{"message":"si, eso"}',
+                         content_type="application/json")
+
+        enviado = generar.call_args.kwargs["contents"]
+        self.assertGreater(len(enviado), 1)  # el primer intercambio viajo en el historial
+
 
 class PropuestaTests(TestCase):
     """Backlog manual de ideas: mejoras y preguntas nuevas a futuro, distinto
@@ -2107,6 +2317,12 @@ class PropuestaTests(TestCase):
         /propuestas/ sigue existiendo y funcionando para quien tenga el link."""
         respuesta = self.client.get("/")
         self.assertNotContains(respuesta, 'href="/propuestas/"')
+
+    def test_la_pagina_avisa_que_esta_en_fase_beta(self):
+        respuesta = self.client.get("/")
+        self.assertContains(respuesta, "Iris 2.0")
+        self.assertContains(respuesta, "Beta")
+        self.assertContains(respuesta, "fase beta")
 
     def test_con_sesion_se_ve_el_formulario(self):
         respuesta = self.client.get("/propuestas/")
@@ -3050,6 +3266,39 @@ class DriveSyncTests(_DjangoTestCase):
         _get.side_effect = responder
         archivos = drive._listar_archivos("raiz")
         self.assertEqual([a["id"] for a in archivos], ["ok.pdf"])
+
+    @patch("chat.drive._get")
+    def test_id_de_archivo_encuentra_por_nombre_exacto(self, _get):
+        """.strip(): el nombre de una Sheet en Drive a veces trae espacios de
+        mas al final (ver chat/drive.py::_contenido)."""
+        from chat import drive
+        _get.return_value = {"files": [
+            {"id": "abc123", "name": "Turnos Tanica y Digital  ",
+             "mimeType": drive.MIME_SHEET},
+        ]}
+        with override_settings(GOOGLE_DRIVE_FOLDER_ID="raiz"):
+            self.assertEqual(drive.id_de_archivo("Turnos Tanica y Digital"), "abc123")
+
+    @patch("chat.drive._get", return_value={"files": []})
+    def test_id_de_archivo_none_si_no_esta(self, _get):
+        from chat import drive
+        with override_settings(GOOGLE_DRIVE_FOLDER_ID="raiz"):
+            self.assertIsNone(drive.id_de_archivo("No Existe"))
+
+    @patch("chat.drive._token", return_value="token-falso")
+    @patch("chat.drive.requests.get")
+    def test_valores_de_hoja_pide_la_pestana_por_nombre(self, mock_get, mock_token):
+        from chat import drive
+        mock_get.return_value = Mock(
+            json=lambda: {"values": [["Turno 1", "14-sept-2026"]]})
+        mock_get.return_value.raise_for_status = lambda: None
+
+        filas = drive.valores_de_hoja("sheet-id", "Hoja 2")
+
+        self.assertEqual(filas, [["Turno 1", "14-sept-2026"]])
+        url = mock_get.call_args.args[0]
+        self.assertIn("sheet-id", url)
+        self.assertIn("Hoja%202", url)  # el espacio va codificado en la URL
 
 
 @SIN_DOCUMENTOS

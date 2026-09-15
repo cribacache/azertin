@@ -397,6 +397,11 @@ ASISTENTE_TIMEOUT = int(os.getenv("ASISTENTE_TIMEOUT", "18"))
 # solo demoraria mas en mostrar el aviso real.
 ASISTENTE_REINTENTOS = int(os.getenv("ASISTENTE_REINTENTOS", "3"))
 
+# Cuantas veces tiene que repetirse la MISMA pregunta sin que el modelo la
+# entienda (ConsultaNoResuelta.veces) antes de dejar de sugerirle
+# reformulaciones y decirle de frente que no se logra entender la solicitud.
+ASISTENTE_UMBRAL_SIN_ENTENDER = int(os.getenv("ASISTENTE_UMBRAL_SIN_ENTENDER", "5"))
+
 # Si el proveedor falla varias veces seguidas se deja de llamar por un rato y
 # responden las reglas al instante. Se reactiva solo al vencer la pausa.
 ASISTENTE_FALLAS_MAX = int(os.getenv("ASISTENTE_FALLAS_MAX", "3"))

@@ -48,7 +48,9 @@ CAMPOS_PUBLICOS_DOC = ("id", "nombre", "apodo", "cargo", "familia", "area", "cum
 
 # Campos que pueden salir del backend. El endpoint de empleados expone rut,
 # direccion, cuenta bancaria, salud y prevision; nada de eso cruza esta capa.
-CAMPOS_PUBLICOS = ("id", "nombre", "cargo")
+# El correo SI se expone (decision explicita): es corporativo (nombre@azerta.cl),
+# no un dato personal sensible como el resto.
+CAMPOS_PUBLICOS = ("id", "nombre", "cargo", "email")
 
 
 class BukError(Exception):
@@ -118,8 +120,9 @@ def _nombre(empleado):
 
 
 def _email(empleado):
-    """Correo corporativo, solo como llave para cruzar con la cuenta de Google
-    de quien pregunta (ver chat/perfil.py). No sale en ninguna respuesta."""
+    """Correo corporativo: cruza la cuenta de Google de quien pregunta (ver
+    chat/perfil.py) Y puede salir en una respuesta (herramientas.info_persona;
+    decision explicita, ver CAMPOS_PUBLICOS)."""
     valor = empleado.get("email") or empleado.get("corporate_email") or ""
     return str(valor).strip().lower()
 
@@ -236,8 +239,10 @@ def directorio(forzar=False):
             # el rut solo sirve para cruzar con el Excel de cuentas; se descarta
             # apenas se arma ese cruce y nunca sale en una respuesta
             "_rut": _rut(emp),
-            # el email solo cruza la cuenta de Google con el empleado para saber
-            # el rol de quien pregunta; nunca se expone en una respuesta
+            # el email cruza la cuenta de Google con el empleado (perfil.py) Y
+            # se puede exponer en una respuesta (info_persona): es corporativo,
+            # no un dato personal sensible. Sale anonimizado igual que "nombre"
+            # cuando ASISTENTE_ANONIMIZAR esta activo (ver asistente._anonimizar).
             "email": _email(emp),
             # respaldo de chat/fotos_equipo.py (azerta.cl/equipo) para quien no
             # esta listado ahi todavia; nunca se expone en una respuesta

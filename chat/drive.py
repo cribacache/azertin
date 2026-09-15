@@ -13,9 +13,10 @@ de chat/documentos.py": ver la salvedad de tablas mas abajo):
   - Google Docs nativos -> se exportan a Markdown.
   - Google Sheets nativas -> SOLO si el nombre esta en settings.DRIVE_HOJAS_PERMITIDAS
     (ver mas abajo), se exportan a CSV -y el exportador de Sheets entrega
-    nada mas que la primera pestaña visible; si alguien agrega una segunda no
-    se baja (para leer todas las pestañas hay que habilitar la API de Sheets,
-    hoy apagada en el proyecto de GCP, y usar spreadsheets.values.get).
+    nada mas que la primera pestaña visible. Una segunda pestaña puntual (por
+    ejemplo "Hoja 2" de Turnos, con las semanas presenciales) NO se sincroniza
+    a disco por esta via: se lee en vivo con `valores_de_hoja()` (Sheets API,
+    spreadsheets.values.get), que chat/turnos.py llama directo por nombre.
   - .xlsx subido tal cual (no convertido a Sheets) -> incluido en la MISMA
     lista DRIVE_HOJAS_PERMITIDAS (comparando el nombre sin extension), se baja
     el archivo completo tal cual, sin pasar por el exportador de Sheets y su
@@ -60,8 +61,15 @@ from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
 
-SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+SCOPES = [
+    "https://www.googleapis.com/auth/drive.readonly",
+    # Solo para leer una pestaña puntual por su nombre (valores_de_hoja):
+    # el exportador de Sheets de mas abajo solo entrega la primera pestaña.
+    # Ver chat/turnos.py -necesita la "Hoja 2" de la planilla de turnos.
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
+]
 BASE = "https://www.googleapis.com/drive/v3"
+SHEETS_BASE = "https://sheets.googleapis.com/v4"
 
 MIME_FOLDER = "application/vnd.google-apps.folder"
 MIME_DOC = "application/vnd.google-apps.document"
@@ -115,7 +123,7 @@ def _credenciales():
         with _cred_lock:
             if _cred_estado["ruta"] != ruta:
                 _cred_estado["cred"] = service_account.Credentials.from_service_account_file(
-                    ruta, scopes=[SCOPE])
+                    ruta, scopes=SCOPES)
                 _cred_estado["ruta"] = ruta
     return _cred_estado["cred"]
 
@@ -223,6 +231,41 @@ def _contenido(archivo):
     datos = _get(f"/files/{archivo['id']}",
                  {"alt": "media", "supportsAllDrives": "true"}, binario=True)
     return datos, ext
+
+
+# ---------------------------------------------------------------------------
+# Acceso directo a una pestaña puntual (Sheets API)
+#
+# El exportador de arriba (_contenido, mimeType=text/csv) solo entrega la
+# PRIMERA pestaña de una Sheet nativa. chat/turnos.py necesita una segunda
+# pestaña puntual ("Hoja 2"): esto la lee en vivo via la API de Sheets, sin
+# pasar por la sincronizacion a disco (no es un documento para el corpus, es
+# una tabla chica que se relee cada vez que hace falta).
+# ---------------------------------------------------------------------------
+
+def id_de_archivo(nombre):
+    """Id del archivo (no carpeta) con este nombre exacto dentro de la
+    carpeta compartida, o None si no esta. `.strip()` porque el nombre de una
+    Sheet en Drive a veces trae espacios de mas al final."""
+    nombre = nombre.strip()
+    for archivo in _listar_archivos(settings.GOOGLE_DRIVE_FOLDER_ID):
+        if (archivo.get("name") or "").strip() == nombre:
+            return archivo["id"]
+    return None
+
+
+def valores_de_hoja(spreadsheet_id, nombre_hoja):
+    """Filas crudas (lista de listas de texto) de una pestaña puntual de una
+    Sheet nativa, por su nombre. Lista vacia si la pestaña no tiene datos."""
+    from urllib.parse import quote
+
+    resp = requests.get(
+        f"{SHEETS_BASE}/spreadsheets/{spreadsheet_id}/values/{quote(nombre_hoja, safe='')}",
+        headers={"Authorization": f"Bearer {_token()}"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json().get("values", [])
 
 
 # ---------------------------------------------------------------------------

@@ -52,9 +52,9 @@ def responder_con_modelo(mensaje, historial=None, alias=None, contexto=None):
     """Le pregunta a Gemini. Es la unica via de respuesta: no hay reglas de
     respaldo detras.
 
-    Devuelve la respuesta armada, `False` si el modelo respondio con la marca
-    NO_SE (sabe que no sabe), o `None` si no se pudo ni siquiera consultarlo
-    (sin clave, en pausa por fallas recientes, o la llamada broto un error).
+    Devuelve la respuesta armada (haya o no podido resolver la consulta), o
+    `None` si no se pudo ni siquiera consultarlo (sin clave, en pausa por
+    fallas recientes, o la llamada broto un error).
     """
     if not asistente.disponible():
         return None
@@ -73,12 +73,7 @@ def responder_con_modelo(mensaje, historial=None, alias=None, contexto=None):
         return None
 
     if meta.get("exitosa") is False:
-        # El propio modelo dijo, con la marca NO_SE, que no pudo responder.
-        # Se registra como consulta pendiente en vez de mostrar ese texto tal
-        # cual. Se devuelve False (no None) para que quien llama distinga esto
-        # de "no se pudo consultar": aca no vale la pena reintentar.
-        registrar(mensaje, "sin_datos")
-        return False
+        return _respuesta_sin_datos(mensaje, texto, meta)
 
     return {
         "answer": texto,
@@ -101,21 +96,34 @@ def responder_con_modelo(mensaje, historial=None, alias=None, contexto=None):
     }
 
 
-def responder_sin_datos(mensaje, ya_registrada=False):
-    """El modelo respondio, pero dijo que no tiene el dato (marca NO_SE).
-    `ya_registrada` evita registrar dos veces la misma pregunta: quien llama
-    ya la guardo con el motivo "sin_datos" dentro de responder_con_modelo."""
-    if not ya_registrada:
-        registrar(mensaje, "sin_intencion")
+def _respuesta_sin_datos(mensaje, texto_modelo, meta):
+    """El modelo dijo, con la marca NO_SE, que no pudo responder.
+
+    Se registra igual para saber que reforzar despues (ConsultaNoResuelta),
+    pero eso ya NO se le cuenta a quien pregunta: decirle "dejé registrada tu
+    consulta" sonaba a que el sistema archiva el pedido y sigue de largo, en
+    vez de tratar de ayudar en el momento. En su lugar se muestra la
+    sugerencia que el propio modelo ya redacto (ver la regla NO_SE en
+    asistente.INSTRUCCIONES: le pide reformular o intuir a que se referia),
+    salvo que esta MISMA pregunta ya se haya repetido demasiadas veces sin
+    entenderse -ahi ya no vale la pena seguir adivinando.
+    """
+    fila = registrar(mensaje, "sin_datos")
+    if fila.veces > settings.ASISTENTE_UMBRAL_SIN_ENTENDER:
+        respuesta = ("No logro entender esta solicitud. ¿Podrías contármela con "
+                    "otras palabras o darme un poco más de contexto?")
+    else:
+        respuesta = texto_modelo or "Todavía no tengo esa información."
     return {
-        "answer": (
-            "Todavía no tengo esa información. Dejé registrada tu consulta para "
-            "incorporarla más adelante. Por ahora puedo ayudarte con la nómina y "
-            "la disponibilidad del equipo, y con las políticas y procedimientos "
-            "internos que estén cargados."
-        ),
+        "answer": respuesta,
         "items": [],
-        "meta": {"intencion": "sin_datos", "registrada": True, "requests_buk": 0},
+        "salas": [],
+        "meta": {"intencion": "sin_datos", "requests_buk": 0},
+        # Se conserva el historial: si la persona responde a la sugerencia
+        # (o al pedido de mas contexto), esa respuesta sigue siendo el
+        # seguimiento de esta misma conversacion, no un mensaje suelto.
+        "_historial": meta.get("historial"),
+        "_alias": meta.get("alias"),
     }
 
 
@@ -309,12 +317,7 @@ def chat_message(request):
         })
 
     del_modelo = responder_con_modelo(mensaje, historial_modelo, alias_modelo, ctx)
-    if del_modelo:
-        respuesta = del_modelo
-    elif del_modelo is False:
-        respuesta = responder_sin_datos(mensaje, ya_registrada=True)
-    else:
-        respuesta = responder_no_disponible()
+    respuesta = del_modelo if del_modelo else responder_no_disponible()
 
     # Memoria de la conversacion: solo se guarda si el modelo respondio.
     # "en sesion" a proposito: se olvida sola al cerrar el navegador, nada

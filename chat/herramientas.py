@@ -83,11 +83,12 @@ def ausencias_de_persona(nombre, desde=None, hasta=None):
 
 
 def info_persona(nombre):
-    """Quien es una persona: cargo, area y cuentas/clientes que atiende.
+    """Quien es una persona: cargo, area, correo corporativo y cuentas/clientes
+    que atiende.
 
-    Cubre "quien es X", "que cuentas maneja X", "que clientes maneja X": son
-    la misma pregunta con otras palabras, y el modelo decide cuando usarla en
-    vez de tener que programar cada forma de decirla.
+    Cubre "quien es X", "que cuentas maneja X", "cual es el correo de X": son
+    variantes de la misma pregunta, y el modelo decide cuando usarla en vez de
+    tener que programar cada forma de decirla.
     """
     directorio, _ = buk.directorio()
     ids, _ = personas.buscar(nombre or "", directorio)
@@ -108,6 +109,7 @@ def info_persona(nombre):
         "nombre": persona["nombre"],
         "cargo": persona.get("cargo") or "",
         "area": persona.get("area") or "",
+        "email": persona.get("email") or "",
         "cuentas": persona.get("cuentas") or [],
     }
 
@@ -381,12 +383,19 @@ def beneficios_de_persona(nombre):
     }
 
 
-def turno_de_persona(nombre):
-    """Turno, modalidad y puesto de una persona, desde la planilla de turnos.
+def turno_de_persona(nombre, fecha=None):
+    """Turno, modalidad, puesto y si tiene presencial en una semana puntual,
+    desde la planilla de turnos.
 
     BUK no tiene este dato: vive aparte (chat/turnos.py). Resuelve el nombre
     contra la nomina de BUK igual que el resto de las herramientas
     "de_persona", y despues cruza por nombre con esa planilla.
+
+    "modalidad" ("Presencial"/"Hibrido") es la condicion general, pero para
+    alguien hibrido con turno rotativo (Turno 1/Turno 2) no dice si ESTA
+    semana puntual le toca presencial o no -eso alterna semana por medio,
+    segun Hoja 2 (turnos.info_presencial). El campo "presencial" trae esa
+    respuesta ya resuelta.
     """
     directorio, _ = buk.directorio()
     ids, _ = personas.buscar(nombre or "", directorio)
@@ -418,6 +427,7 @@ def turno_de_persona(nombre):
         "modalidad": fila["modalidad"] or None,
         "puesto": fila["puesto"] if fila["puesto"] not in ("", "-") else None,
         "observacion": fila["observacion"] or None,
+        "presencial": turnos.info_presencial(fila, _fecha(fecha)),
     }
 
 
@@ -567,7 +577,9 @@ ESQUEMAS = [
                 "licencia, con permiso o ausente, y en que fechas. Acepta nombre, "
                 "apellido o ambos. Si la pregunta es sobre su identidad ('quien es'), "
                 "cargo, area o las cuentas/clientes que atiende, usa info_persona en "
-                "vez de esta: esta herramienta NO trae esos datos."
+                "vez de esta: esta herramienta NO trae esos datos. Si preguntan si es "
+                "presencial o hibrido, tampoco es esta: eso es turno_de_persona (la "
+                "modalidad de su turno, no si esta ausente)."
             ),
             "parameters": {
                 "type": "object",
@@ -585,10 +597,11 @@ ESQUEMAS = [
         "function": {
             "name": "info_persona",
             "description": (
-                "Quien es una persona: su cargo, area y las cuentas o clientes "
-                "que atiende. Usar para 'quien es X', 'que cuentas/clientes "
-                "maneja o atiende X' o 'a que cuenta pertenece X'. No trae "
-                "ausencias ni disponibilidad, solo identidad y asignacion."
+                "Quien es una persona: su cargo, area, correo corporativo y las "
+                "cuentas o clientes que atiende. Usar para 'quien es X', 'que "
+                "cuentas/clientes maneja o atiende X', 'a que cuenta pertenece "
+                "X' o 'cual es el correo de X'. No trae ausencias ni "
+                "disponibilidad, solo identidad y asignacion."
             ),
             "parameters": {
                 "type": "object",
@@ -699,7 +712,9 @@ ESQUEMAS = [
                 "Quien SI esta en su jornada (lo contrario de listar_ausencias), "
                 "opcionalmente filtrado por cuenta o area. Usar para 'quien esta "
                 "trabajando hoy', 'esta todo el equipo', 'quien esta disponible "
-                "en X'."
+                "en X'. Si preguntan si alguien esta PRESENCIAL o HIBRIDO, no es "
+                "esta herramienta: eso es la modalidad de su turno "
+                "(turno_de_persona/listar_turnos), no si vino a trabajar hoy."
             ),
             "parameters": {
                 "type": "object",
@@ -765,13 +780,29 @@ ESQUEMAS = [
             "name": "turno_de_persona",
             "description": (
                 "Turno (permanente, turno 1, turno 2), modalidad (presencial, "
-                "hibrido) y puesto asignado de UNA persona, desde la planilla "
-                "de turnos. Usar para 'que turno tiene X', 'X es presencial o "
-                "hibrido', 'en que puesto se sienta X'."
+                "hibrido), puesto, y si tiene presencial en una semana "
+                "puntual (campo 'presencial' de la respuesta), de UNA "
+                "persona. Usar SIEMPRE para 'X es presencial o hibrido', "
+                "'X tiene presencial esta/la proxima semana', 'que turno "
+                "tiene X', 'en que puesto se sienta X' -aunque la pregunta "
+                "mencione 'hoy' ('¿X esta presencial hoy?'): esto NO es lo "
+                "mismo que si vino a trabajar (eso es "
+                "quien_esta_trabajando/listar_ausencias). Alguien hibrido con "
+                "turno rotativo tiene presencial solo semana por medio: usa "
+                "'fecha' para preguntar por una semana distinta a la actual."
             ),
             "parameters": {
                 "type": "object",
-                "properties": {"nombre": {"type": "string"}},
+                "properties": {
+                    "nombre": {"type": "string"},
+                    "fecha": {
+                        "type": "string",
+                        "description": (
+                            "Un dia cualquiera de la semana por la que preguntan "
+                            "(AAAA-MM-DD). Omitir para la semana de hoy."
+                        ),
+                    },
+                },
                 "required": ["nombre"],
             },
         },
