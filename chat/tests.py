@@ -867,6 +867,20 @@ class TimeoutTests(TestCase):
         opciones = cliente._api_client._http_options
         self.assertEqual(opciones.timeout, 12000)  # el SDK los cuenta en ms
 
+    @override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_REINTENTOS=3)
+    def test_el_cliente_reintenta_errores_transitorios_del_proveedor(self):
+        """Sin retry_options el SDK no reintenta nada (visto en produccion: un
+        504 puntual tumbaba toda la respuesta al primer intento)."""
+        from chat import asistente
+        cliente = asistente._cliente_gemini()
+        retry = cliente._api_client._http_options.retry_options
+        self.assertEqual(retry.attempts, 3)
+        self.assertIn(504, retry.http_status_codes)
+        self.assertIn(503, retry.http_status_codes)
+        # 429 (cuota agotada) no se reintenta: no se arregla reintentando, y
+        # demoraria mas en mostrar el aviso real.
+        self.assertNotIn(429, retry.http_status_codes)
+
 
 class ClienteReutilizadoTests(TestCase):
     """El cliente de Gemini se reutiliza entre preguntas en vez de abrir una

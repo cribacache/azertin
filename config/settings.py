@@ -390,6 +390,13 @@ BUK_VACACIONES_MARGEN = timedelta(days=int(os.getenv("BUK_VACACIONES_MARGEN_DIAS
 # respaldo con OpenAI mientras se evaluaba; se saco al confirmarse el pago).
 ASISTENTE_TIMEOUT = int(os.getenv("ASISTENTE_TIMEOUT", "18"))
 
+# Reintentos ante un error transitorio del proveedor (500/502/503/504: un
+# 504 DEADLINE_EXCEEDED puntual, visto en produccion, no significa que Gemini
+# este realmente caido). Incluye el intento inicial: 3 = 1 intento + 2
+# reintentos. NO incluye 429 (cuota agotada): eso no se arregla reintentando,
+# solo demoraria mas en mostrar el aviso real.
+ASISTENTE_REINTENTOS = int(os.getenv("ASISTENTE_REINTENTOS", "3"))
+
 # Si el proveedor falla varias veces seguidas se deja de llamar por un rato y
 # responden las reglas al instante. Se reactiva solo al vencer la pausa.
 ASISTENTE_FALLAS_MAX = int(os.getenv("ASISTENTE_FALLAS_MAX", "3"))

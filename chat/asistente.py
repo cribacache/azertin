@@ -401,16 +401,29 @@ def _cliente_gemini():
     from google import genai
     from google.genai import types
 
-    firma = (settings.GEMINI_API_KEY, settings.ASISTENTE_TIMEOUT)
+    firma = (settings.GEMINI_API_KEY, settings.ASISTENTE_TIMEOUT, settings.ASISTENTE_REINTENTOS)
     if _cliente_estado["firma"] != firma:
         with _cliente_lock:
             if _cliente_estado["firma"] != firma:
                 # Sin timeout explicito una llamada colgada deja la pregunta
                 # esperando para siempre: el SDK no impone limite por su cuenta.
+                #
+                # Sin retry_options el SDK NO reintenta nada (una sola llamada,
+                # pase lo que pase): un 504 DEADLINE_EXCEEDED puntual del lado
+                # de Gemini -visto en produccion, no una caida real- tumbaba
+                # toda la respuesta al primer intento. 429 (cuota agotada)
+                # queda afuera a proposito: reintentarlo no lo arregla, solo
+                # demora mas en mostrar el aviso real.
                 _cliente_estado["cliente"] = genai.Client(
                     api_key=settings.GEMINI_API_KEY,
                     http_options=types.HttpOptions(
-                        timeout=settings.ASISTENTE_TIMEOUT * 1000),
+                        timeout=settings.ASISTENTE_TIMEOUT * 1000,
+                        retry_options=types.HttpRetryOptions(
+                            attempts=settings.ASISTENTE_REINTENTOS,
+                            initial_delay=1.0,
+                            http_status_codes=(500, 502, 503, 504),
+                        ),
+                    ),
                 )
                 _cliente_estado["firma"] = firma
     return _cliente_estado["cliente"]
