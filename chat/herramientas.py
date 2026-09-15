@@ -486,16 +486,21 @@ def crear_reunion(sala, fecha, hora_inicio, hora_fin, titulo, invitados=None, _c
         return {"creada": False, "motivo": str(error)}
 
 
+# Las dos herramientas de reserva de salas, para poder apagarlas juntas
+# (settings.SALAS_REUNIONES_HABILITADO, ver chat/asistente.py::salas_habilitadas)
+# sin tocar el resto.
+HERRAMIENTAS_SALAS = {"salas_disponibles", "crear_reunion"}
+
 # Herramientas que necesitan saber quien pregunta (su correo real), no solo
 # los argumentos que arma el modelo: chat/asistente.py les inyecta
 # `_contexto` antes de llamarlas, fuera del esquema que ve Gemini.
-NECESITAN_CONTEXTO = {"salas_disponibles", "crear_reunion"}
+NECESITAN_CONTEXTO = HERRAMIENTAS_SALAS
 
 # Estas dos hablan con Calendar en tiempo real (disponibilidad que cambia
 # minuto a minuto) o tienen efecto de lado (crean un evento real): cachear su
 # respuesta como cualquier otra pregunta serviria una disponibilidad vieja o
 # escondería que ya se puede volver a intentar. Ver chat/respuestas.py.
-NO_CACHEABLES = {"salas_disponibles", "crear_reunion"}
+NO_CACHEABLES = HERRAMIENTAS_SALAS
 
 
 def buscar_politica(consulta):

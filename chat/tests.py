@@ -748,6 +748,48 @@ class SalasIntegracionTests(TestCase):
         self.assertEqual(mock_disp.call_count, 2)  # se volvio a consultar Calendar
 
 
+class SalasApagadorTests(TestCase):
+    """settings.SALAS_REUNIONES_HABILITADO: apagador temporal, sin borrar el
+    codigo (chat/asistente.py::salas_habilitadas)."""
+
+    def test_habilitadas_por_defecto(self):
+        from chat import asistente
+        self.assertTrue(asistente.salas_habilitadas())
+
+    @override_settings(SALAS_REUNIONES_HABILITADO=False)
+    def test_se_puede_apagar(self):
+        from chat import asistente
+        self.assertFalse(asistente.salas_habilitadas())
+
+    @override_settings(SALAS_REUNIONES_HABILITADO=False)
+    def test_apagadas_no_se_declaran_a_gemini(self):
+        from chat import asistente
+        nombres = {f.name for tool in asistente._declaraciones_gemini()
+                  for f in tool.function_declarations}
+        self.assertNotIn("salas_disponibles", nombres)
+        self.assertNotIn("crear_reunion", nombres)
+
+    def test_habilitadas_si_se_declaran_a_gemini(self):
+        from chat import asistente
+        nombres = {f.name for tool in asistente._declaraciones_gemini()
+                  for f in tool.function_declarations}
+        self.assertIn("salas_disponibles", nombres)
+        self.assertIn("crear_reunion", nombres)
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba", SALAS_REUNIONES_HABILITADO=False)
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_apagadas_no_aparecen_en_las_instrucciones(self, mock_cliente, mock_buk):
+        mock_cliente.return_value.models.generate_content.return_value = _respuesta_gemini(
+            texto="Todo bien.")
+        self.client.post("/api/chat/", data=json.dumps({"message": "hola"}),
+                         content_type="application/json")
+        instrucciones = mock_cliente.return_value.models.generate_content.call_args \
+            .kwargs["config"].system_instruction
+        for palabra in ("sala de reuniones", "salas_disponibles", "crear_reunion"):
+            self.assertNotIn(palabra, instrucciones)
+
+
 @SIN_DOCUMENTOS
 @override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_ANONIMIZAR=False)
 class HistorialSobreviveAlChequeoDeEstadoTests(TestCase):

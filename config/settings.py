@@ -124,6 +124,11 @@ GOOGLE_GMAIL_DESTINO = os.getenv("GOOGLE_GMAIL_DESTINO", "").strip()
 GOOGLE_CALENDAR_CREDENTIALS = os.getenv("GOOGLE_CALENDAR_CREDENTIALS", "").strip()
 GOOGLE_WORKSPACE_ADMIN = os.getenv("GOOGLE_WORKSPACE_ADMIN", "").strip()
 
+# Apagador temporal (sin borrar el codigo): en False, Iris ni se entera de
+# que existe la reserva de salas -no se declara la herramienta a Gemini ni se
+# menciona en las instrucciones (chat/asistente.py::salas_habilitadas).
+SALAS_REUNIONES_HABILITADO = os.getenv("SALAS_REUNIONES_HABILITADO", "True").lower() == "true"
+
 DRIVE_CACHE_DIR = Path(os.getenv("DRIVE_CACHE_DIR", BASE_DIR / ".drive_cache"))
 # Cada cuanto se vuelve a mirar Drive (solo baja lo que cambio).
 DRIVE_SYNC_TTL = int(os.getenv("DRIVE_SYNC_TTL", "300"))
