@@ -47,7 +47,7 @@ function quitarVacio() {
   }
 }
 
-function addMessage(text, type, items = null, meta = null, pregunta = null) {
+function addMessage(text, type, items = null) {
   quitarVacio();
   const item = document.createElement("div");
   item.className = `message ${type}`;
@@ -80,64 +80,10 @@ function addMessage(text, type, items = null, meta = null, pregunta = null) {
     cuerpo.appendChild(lista);
   }
 
-  if (meta && meta.requests_buk !== undefined) {
-    const tag = document.createElement("span");
-    tag.className = "meta-tag";
-    const partes = [];
-    if (meta.desde_cache) partes.push("desde caché");
-    else partes.push(`${meta.requests_buk} consulta${meta.requests_buk === 1 ? "" : "s"} a BUK`);
-    if (meta.intencion === "modelo") partes.push("con modelo");
-    if (meta.intencion === "no_disponible") partes.push("Gemini no disponible");
-    if (meta.intencion === "no_disponible") tag.dataset.respaldo = "1";
-    tag.textContent = partes.join(" · ");
-    cuerpo.appendChild(tag);
-  }
-
-  // Boton de retroalimentacion: solo en respuestas reales del bot, no en un
-  // saludo ("Hola.") ni en el mensaje del propio usuario. Sirve para separar,
-  // de las preguntas que el bot contesto con confianza, cuales en realidad
-  // estaban mal: esa es la senal mas util para saber que programar despues.
-  if (type === "bot" && pregunta && meta && meta.intencion !== "cortesia") {
-    const feedback = document.createElement("div");
-    feedback.className = "feedback";
-    feedback.innerHTML =
-      `<span class="feedback-pregunta">¿Te sirvió esta respuesta?</span>` +
-      `<button type="button" class="fb-si" aria-label="Sí me sirvió">👍</button>` +
-      `<button type="button" class="fb-no" aria-label="No me sirvió">👎</button>`;
-    feedback.dataset.pregunta = pregunta;
-    cuerpo.appendChild(feedback);
-  }
-
   messages.appendChild(item);
   alFinal();
   return item;
 }
-
-// Delegado en el contenedor: los botones se crean despues de este listener,
-// uno por cada respuesta que llega.
-messages.addEventListener("click", async (event) => {
-  const boton = event.target.closest(".fb-si, .fb-no");
-  if (!boton) return;
-  const feedback = boton.closest(".feedback");
-  const pregunta = feedback && feedback.dataset.pregunta;
-  if (!pregunta || feedback.dataset.enviado) return;
-
-  const exitosa = boton.classList.contains("fb-si");
-  feedback.dataset.enviado = "1";
-  feedback.dataset.resultado = exitosa ? "si" : "no";
-  feedback.querySelector(".feedback-pregunta").textContent =
-    exitosa ? "Gracias por confirmarlo." : "Gracias, quedó registrada para revisarla.";
-
-  try {
-    await fetch("/api/feedback/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken },
-      body: JSON.stringify({ message: pregunta, exitosa }),
-    });
-  } catch (_) {
-    // El feedback es secundario: si falla el envio, no interrumpe el chat.
-  }
-});
 
 function mostrarEscribiendo() {
   quitarVacio();
@@ -151,45 +97,34 @@ function mostrarEscribiendo() {
   return item;
 }
 
+// Al lado del logo: solo la luz, sin texto. Que modelo esta respondiendo
+// ahora y por que (si Gemini no esta disponible) queda en el title del
+// contenedor, visible al pasar el mouse.
 async function checkConnection() {
-  const title = document.querySelector("#connection-title");
-  const detail = document.querySelector("#connection-detail");
-  const dot = document.querySelector("#signal-dot");
   const modelDot = document.querySelector("#model-signal-dot");
-  const modelTitle = document.querySelector("#model-signal-title");
   const modelPill = document.querySelector("#model-signal");
 
-  dot.classList.remove("ok", "error");
   try {
     const response = await fetch("/api/status/");
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
-    dot.classList.add("ok");
-    title.textContent = "En línea";
-    detail.textContent = `${result.personas_activas} personas`;
 
-    // Que modelo esta respondiendo ahora, y si Gemini no esta disponible,
-    // por que: no hay reglas de respaldo, asi que sin esto una respuesta de
-    // error parece un bug del bot en vez de la cuota agotada.
     const asistente = result.asistente;
-    if (asistente && modelDot && modelTitle) {
+    if (asistente) {
       modelDot.classList.remove("ok", "off");
       if (asistente.disponible) {
         modelDot.classList.add("ok");
-        modelTitle.textContent = asistente.modelo;
         modelPill.title = `Respondiendo con ${asistente.modelo}.`;
       } else {
         modelDot.classList.add("off");
-        modelTitle.textContent = `No disponible · ${asistente.motivo_legible}`;
         modelPill.title =
           `${asistente.modelo}: ${asistente.motivo_legible}. ` +
           "El chat avisa el error en vez de responder mientras tanto.";
       }
     }
   } catch (error) {
-    dot.classList.add("error");
-    title.textContent = "Sin conexión";
-    detail.textContent = "";
+    modelDot.classList.remove("ok", "off");
+    modelPill.title = "Sin conexión con el servidor.";
   }
 }
 
@@ -213,7 +148,7 @@ form.addEventListener("submit", async (event) => {
     const result = await response.json();
     escribiendo.remove();
     if (!response.ok) throw new Error(result.error);
-    addMessage(result.answer, "bot", result.items, result.meta, message);
+    addMessage(result.answer, "bot", result.items);
     // apenada si Gemini no estaba disponible, contenta si salió bien
     const noDisponible = result.meta && result.meta.intencion === "no_disponible";
     estadoMascota(noDisponible ? "apenado" : "feliz", 2200);

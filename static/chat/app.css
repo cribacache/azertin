@@ -100,25 +100,16 @@ body::after {
   min-width: 0;
 }
 
-/* Al lado del logo: que modelo esta respondiendo ahora mismo, y si Gemini no
-   esta disponible, por que (cuota agotada, clave invalida, etc). Sin esto,
-   una respuesta rara con la cuota agotada parece un bug del bot. */
+/* Al lado del logo: solo la luz. Que modelo esta respondiendo ahora mismo, y
+   si Gemini no esta disponible, por que (cuota agotada, clave invalida,
+   etc), queda en el title, visible al pasar el mouse. */
 .model-signal {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 13px 6px 10px;
+  justify-content: center;
+  padding: 8px;
   border: 1px solid var(--linea);
-  border-radius: 999px;
-  color: var(--gris-claro);
-  font-size: 11.5px;
-  min-width: 0;
-}
-
-.model-signal-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  border-radius: 50%;
 }
 
 .model-signal-dot {
@@ -139,21 +130,8 @@ body::after {
   gap: 10px;
 }
 
-.signal {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 6px 14px 6px 11px;
-  border: 1px solid var(--linea);
-  border-radius: 999px;
-  color: var(--gris-claro);
-  font-size: 11.5px;
-}
-
-/* Boton al backlog manual de propuestas/mejoras (admin de Django). A
-   diferencia de las pilas de estado (.signal, .model-signal), que solo
-   informan, este SI hace algo al hacer clic: lleva un color propio para que
-   se note que es interactivo. */
+/* Usado fuera del topbar de Iris: en las paginas de error (400/403/404/500)
+   y en la pantalla de "gracias" de una propuesta enviada. */
 .backlog-btn {
   display: flex;
   align-items: center;
@@ -183,21 +161,6 @@ body::after {
   font-size: 12px;
   line-height: 1;
 }
-
-.signal-detail { color: var(--gris-claro); }
-.signal-detail:empty { display: none; }
-
-.signal-dot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--gris);
-  animation: latido 1.6s ease-in-out infinite;
-}
-
-.signal-dot.ok { background: var(--azul); animation: none; box-shadow: 0 0 0 3px rgba(55,145,195,.2); }
-.signal-dot.error { background: var(--rosado); animation: none; }
 
 @keyframes latido {
   0%, 100% { opacity: .35; transform: scale(.85); }
@@ -334,7 +297,7 @@ body::after {
 
 .people .top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .people strong { font-size: 13.5px; color: var(--humo); font-weight: 700; }
-.signal, .composer input { font-weight: 400; }
+.composer input { font-weight: 400; }
 
 .people .kind {
   flex: none;
@@ -348,54 +311,6 @@ body::after {
 .people .kind[data-cat="vacaciones"] { color: var(--azul); }
 .people .role { font-size: 11.5px; color: var(--gris-claro); }
 .people .dates { font-size: 11.5px; color: var(--claro); font-variant-numeric: tabular-nums; opacity: .8; }
-
-.meta-tag {
-  display: inline-block;
-  margin-top: 10px;
-  font-size: 9.5px;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: var(--gris-claro);
-}
-
-.message.bot:has(.meta-tag[data-respaldo]) .avatar { border-color: rgba(55,145,195,.5); color: var(--azul); }
-.meta-tag[data-respaldo] { color: var(--azul); }
-
-/* ---------- feedback ---------- */
-.feedback {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--linea);
-}
-
-.feedback-pregunta {
-  font-size: 10.5px;
-  color: var(--gris-claro);
-  margin-right: 2px;
-}
-
-.feedback button {
-  border: 1px solid var(--linea);
-  background: transparent;
-  border-radius: 999px;
-  width: 26px;
-  height: 26px;
-  font-size: 12px;
-  line-height: 1;
-  cursor: pointer;
-  transition: transform .12s ease, border-color .12s ease, opacity .12s ease;
-}
-
-.feedback button:hover { transform: scale(1.12); border-color: var(--rosado); }
-.feedback button:focus-visible { outline: 2px solid var(--rosado); outline-offset: 2px; }
-
-.feedback[data-enviado] button { pointer-events: none; }
-.feedback[data-resultado="si"] .fb-no { opacity: .3; }
-.feedback[data-resultado="no"] .fb-si { opacity: .3; }
-.feedback[data-resultado="no"] .feedback-pregunta { color: var(--rosado); }
 
 /* ---------- escribiendo ---------- */
 .typing { display: flex; gap: 5px; padding: 11px 0 0; }
@@ -692,12 +607,8 @@ body::after {
   .composer button { padding: 12px 16px; }
   .message { max-width: 100%; }
   .message.user { max-width: 90%; }
-  .signal-detail { display: none; }
   .topbar-izquierda { gap: 8px; min-width: 0; flex: 1; }
-  .model-signal { max-width: 132px; }
   .topbar-derecha { gap: 6px; }
-  .backlog-btn span:not(.backlog-btn-mas) { display: none; }
-  .backlog-btn { padding: 6px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

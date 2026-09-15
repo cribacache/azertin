@@ -1633,17 +1633,11 @@ class PropuestaTests(TestCase):
         self.assertEqual(p.estado, "pendiente")
         self.assertEqual(str(p), "Responder por Slack")
 
-    def test_el_boton_de_la_pagina_apunta_al_formulario_publico(self):
+    def test_el_chat_ya_no_tiene_boton_de_propuestas(self):
+        """El chat quito el acceso directo al formulario (queda mas limpio);
+        /propuestas/ sigue existiendo y funcionando para quien tenga el link."""
         respuesta = self.client.get("/")
-        self.assertContains(respuesta, 'href="/propuestas/"')
-
-    def test_el_boton_abre_en_pestana_nueva(self):
-        """Si navegara en la misma pestana, volver del formulario recargaria
-        el chat: eso dispara /api/status/, que borra la memoria de la
-        conversacion a proposito al cargar la pagina. Abrir en otra pestana
-        evita que mandar una propuesta borre la conversacion en curso."""
-        respuesta = self.client.get("/")
-        self.assertContains(respuesta, 'target="_blank"')
+        self.assertNotContains(respuesta, 'href="/propuestas/"')
 
     def test_con_sesion_se_ve_el_formulario(self):
         respuesta = self.client.get("/propuestas/")
