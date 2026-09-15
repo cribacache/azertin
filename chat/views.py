@@ -201,10 +201,16 @@ def api_feedback(request):
 @never_cache
 @require_GET
 def api_status(request):
-    # Lo llama la pagina al cargar: recargar empieza una conversacion limpia,
-    # sin quedar enganchado al ultimo tema consultado.
-    request.session.pop("historial_modelo", None)
-    request.session.pop("alias_modelo", None)
+    # Esta vista la llama la pagina en DOS momentos distintos: al cargar (ahi
+    # SI hay que empezar una conversacion limpia) y despues de CADA mensaje,
+    # para refrescar la lucecita de "modelo disponible" (ver app.js). Borrar
+    # el historial tambien en ese segundo caso -como pasaba antes- le hacia
+    # perder el hilo a la conversacion en cuanto llegaba la primera respuesta:
+    # ninguna conversacion de mas de un mensaje podia mantener contexto. Por
+    # eso el reseteo es opcional (?nueva=1), y solo lo pide la carga inicial.
+    if request.GET.get("nueva"):
+        request.session.pop("historial_modelo", None)
+        request.session.pop("alias_modelo", None)
 
     try:
         personas_map, _ = buk.directorio()

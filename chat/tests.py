@@ -706,6 +706,74 @@ class SalasIntegracionTests(TestCase):
         self.assertEqual(mock_disp.call_count, 2)  # se volvio a consultar Calendar
 
 
+@SIN_DOCUMENTOS
+@override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_ANONIMIZAR=False)
+class HistorialSobreviveAlChequeoDeEstadoTests(TestCase):
+    """Bug real de produccion: la pagina llama a /api/status/ despues de
+    CADA mensaje, no solo al cargar (ver app.js::checkConnection, para
+    refrescar la luz de "modelo disponible" al tiro si la cuota se agoto a
+    mitad de una pregunta). Esa vista borraba el historial de la sesion
+    SIEMPRE que se llamaba: en cuanto llegaba la primera respuesta, ese
+    chequeo automatico borraba el contexto, y el siguiente mensaje se
+    contestaba como si fuera el primero de una conversacion nueva (se saluda
+    de nuevo, se repiten preguntas ya contestadas). Ahora el reseteo es
+    explicito (?nueva=1) y solo lo pide la carga inicial de la pagina."""
+
+    def setUp(self):
+        cache.clear()
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_el_chequeo_de_estado_sin_nueva_no_borra_el_historial(self, mock_cliente, mock_buk):
+        mock_cliente.return_value.models.generate_content.return_value = _respuesta_gemini(
+            texto="Hay 3 personas fuera hoy.")
+        self.client.post("/api/chat/", data=json.dumps({"message": "quien esta fuera hoy"}),
+                         content_type="application/json")
+
+        self.client.get("/api/status/")  # exactamente lo que hace app.js despues de un mensaje
+
+        self.assertIsNotNone(self.client.session.get("historial_modelo"))
+
+    def test_el_chequeo_de_estado_con_nueva_si_borra_el_historial(self):
+        session = self.client.session
+        session["historial_modelo"] = [{"role": "user", "texto": "algo"}]
+        session.save()
+
+        self.client.get("/api/status/?nueva=1")  # lo que hace app.js al cargar la pagina
+
+        self.assertIsNone(self.client.session.get("historial_modelo"))
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_conversacion_de_dos_mensajes_mantiene_contexto_como_en_el_navegador(
+            self, mock_cliente, mock_buk):
+        """Reproduce el flujo real tal cual lo hace el navegador: mensaje,
+        chequeo de estado (sin ?nueva, el que dispara cada respuesta), y un
+        segundo mensaje que solo se puede responder bien si el historial del
+        primero sigue ahi."""
+        generar = mock_cliente.return_value.models.generate_content
+        generar.side_effect = [
+            _respuesta_gemini(llamadas=[_PedidoGemini(
+                "listar_ausencias", {"desde": _f(0), "hasta": _f(0)})]),
+            _respuesta_gemini(texto="Hay 3 personas fuera hoy."),
+        ]
+        self.client.post("/api/chat/", data=json.dumps({"message": "quien esta fuera hoy"}),
+                         content_type="application/json")
+        self.client.get("/api/status/")
+
+        generar.side_effect = None
+        generar.return_value = _respuesta_gemini(texto="Ademas de esas 3, nadie mas.")
+        cuerpo = self.client.post(
+            "/api/chat/", data=json.dumps({"message": "y alguien mas?"}),
+            content_type="application/json").json()
+
+        # el historial del primer mensaje viajo en el segundo pedido a Gemini:
+        # 2 turnos del primer intercambio (user + model) + el mensaje nuevo
+        enviado = generar.call_args.kwargs["contents"]
+        self.assertEqual(len(enviado), 3)
+        self.assertEqual(cuerpo["answer"], "Ademas de esas 3, nadie mas.")
+
+
 class TextoQuienTests(TestCase):
     """chat/asistente.py: la frase que le dice al modelo con quien habla, para
     que la salude por nombre al empezar la conversacion (chat/perfil.py trae

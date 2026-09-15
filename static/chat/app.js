@@ -116,12 +116,20 @@ function mostrarEscribiendo() {
 // Al lado del logo: solo la luz, sin texto. Que modelo esta respondiendo
 // ahora y por que (si Gemini no esta disponible) queda en el title del
 // contenedor, visible al pasar el mouse.
-async function checkConnection() {
+//
+// `nuevaConversacion` solo va en true en la carga inicial de la pagina: ese
+// es el unico momento en que hay que olvidar la conversacion anterior. Este
+// mismo chequeo se vuelve a llamar despues de CADA mensaje (mas abajo) para
+// refrescar la luz; si tambien borrara el historial ahi, ninguna
+// conversacion de mas de un mensaje podria mantener el contexto (bug real:
+// se perdia todo lo hablado apenas llegaba la primera respuesta).
+async function checkConnection(nuevaConversacion = false) {
   const modelDot = document.querySelector("#model-signal-dot");
   const modelPill = document.querySelector("#model-signal");
 
   try {
-    const response = await fetch("/api/status/");
+    const url = nuevaConversacion ? "/api/status/?nueva=1" : "/api/status/";
+    const response = await fetch(url);
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
 
@@ -185,4 +193,4 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
-checkConnection();
+checkConnection(true);
