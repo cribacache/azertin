@@ -18,7 +18,7 @@ from .intents import normalizar
 
 # Subir esto invalida todo lo cacheado. Cambiarlo al modificar como se arman las
 # respuestas, para no servir el formato viejo desde el cache.
-VERSION = "v8"
+VERSION = "v9"
 
 
 def _canonica(mensaje):
