@@ -47,7 +47,7 @@ function quitarVacio() {
   }
 }
 
-function addMessage(text, type, items = null) {
+function addMessage(text, type, items = null, salas = null) {
   quitarVacio();
   const item = document.createElement("div");
   item.className = `message ${type}`;
@@ -75,6 +75,22 @@ function addMessage(text, type, items = null) {
       li.dataset.cat = p.tipo;
       li.querySelector(".role").textContent = p.cargo;
       li.querySelector(".dates").textContent = `${rango}${dias}${media}${pend}`;
+      lista.appendChild(li);
+    }
+    cuerpo.appendChild(lista);
+  }
+
+  // Disponibilidad de salas (salas_disponibles, ver chat/asistente.py): la
+  // ocupada se tacha, aparte de lo que Iris haya redactado en el texto.
+  if (salas && salas.length) {
+    const lista = document.createElement("ul");
+    lista.className = "salas";
+    for (const s of salas) {
+      const li = document.createElement("li");
+      li.className = s.ocupada ? "ocupada" : "libre";
+      li.innerHTML = `<span class="sala-nombre"></span><span class="sala-estado"></span>`;
+      li.querySelector(".sala-nombre").textContent = s.sala;
+      li.querySelector(".sala-estado").textContent = s.ocupada ? "Ocupada" : "Libre";
       lista.appendChild(li);
     }
     cuerpo.appendChild(lista);
@@ -148,7 +164,7 @@ form.addEventListener("submit", async (event) => {
     const result = await response.json();
     escribiendo.remove();
     if (!response.ok) throw new Error(result.error);
-    addMessage(result.answer, "bot", result.items);
+    addMessage(result.answer, "bot", result.items, result.salas);
     // apenada si Gemini no estaba disponible, contenta si salió bien
     const noDisponible = result.meta && result.meta.intencion === "no_disponible";
     estadoMascota(noDisponible ? "apenado" : "feliz", 2200);

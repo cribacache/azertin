@@ -2,12 +2,14 @@
 
 Cruza la cuenta de Google con la que inició sesión (`user.email`) contra el
 empleado de BUK que tiene ese correo, y arma un `Contexto` con lo que necesita
-`chat/autorizacion.py` para decidir qué puede ver: el rol y la familia de rol
-(la "jerarquía") de quien pregunta.
+`chat/autorizacion.py` para decidir qué puede ver (el rol y la familia de rol,
+la "jerarquía", de quien pregunta) y lo que necesita `chat/asistente.py` para
+dirigirse a esa persona por su nombre (`nombre_pila`).
 
 Si no hay match en BUK (contratista, cuenta de servicio, correo que no calza),
-el contexto queda sin `employee_id` ni `familia`: `autorizacion.py` lo trata
-como un ejecutivo que solo se puede consultar a sí mismo.
+el contexto queda sin `employee_id`, `familia` ni `nombre_pila`:
+`autorizacion.py` lo trata como un ejecutivo que solo se puede consultar a sí
+mismo, y el asistente no saluda por nombre a nadie.
 """
 
 import logging
@@ -24,6 +26,7 @@ class Contexto:
     rol: str = PerfilUsuario.SIN_ACCESO
     employee_id: int | None = None
     nombre: str = ""
+    nombre_pila: str = ""  # para saludar y dirigirse a la persona (ver asistente.py)
     familia: str = ""
     area: str = ""
     cuentas: list = field(default_factory=list)
@@ -32,6 +35,19 @@ class Contexto:
     @property
     def es_gerencia(self):
         return self.rol == PerfilUsuario.GERENCIA
+
+
+def _nombre_para_saludar(empleado):
+    """Nombre corto para dirigirse a la persona: su apodo si tiene uno
+    registrado en BUK (asi la conoce el equipo), si no su primer nombre."""
+    apodo = (empleado.get("apodo") or "").strip()
+    if apodo:
+        return apodo
+    pila = (empleado.get("_nombre_pila") or "").strip()
+    if pila:
+        return pila.split()[0]
+    nombre = (empleado.get("nombre") or "").strip()
+    return nombre.split()[0] if nombre else ""
 
 
 def _empleado_por_email(email, directorio):
@@ -72,6 +88,7 @@ def contexto(usuario):
         rol=rol,
         employee_id=empleado.get("id"),
         nombre=empleado.get("nombre", ""),
+        nombre_pila=_nombre_para_saludar(empleado),
         familia=(empleado.get("familia") or "").strip(),
         area=(empleado.get("area") or "").strip(),
         cuentas=list(empleado.get("cuentas") or []),

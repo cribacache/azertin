@@ -47,6 +47,10 @@ MATRIZ_EJECUTIVO = {
     "listar_beneficios": LIBRE,
     "dotacion": LIBRE,
     "cumpleanos": LIBRE,          # solo día y mes, el año ya viene descartado
+    # Salas de reuniones: recurso de la empresa, no dato de una persona.
+    # Cualquiera puede reservar una sala hoy mismo a mano en Calendar.
+    "salas_disponibles": LIBRE,
+    "crear_reunion": LIBRE,
     # Datos de personas: acotados a la jerarquía.
     "listar_ausencias": PARES,
     "quien_esta_trabajando": PARES,

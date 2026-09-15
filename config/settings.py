@@ -112,6 +112,18 @@ GOOGLE_GMAIL_REMITENTE = os.getenv("GOOGLE_GMAIL_REMITENTE", "iris@azerta.cl").s
 # A quien le llega la tarjeta de cumpleanos (hoy: Personas).
 GOOGLE_GMAIL_DESTINO = os.getenv("GOOGLE_GMAIL_DESTINO", "").strip()
 
+# ---------------------------------------------------------------------------
+# Salas de reuniones (chat/salas.py): misma cuenta de servicio con delegacion
+# de dominio, pero "actuando como" alguien distinto segun la llamada.
+#   - Para listar las salas (Admin SDK Directory) actua como
+#     GOOGLE_WORKSPACE_ADMIN: esa lectura pide privilegios de administrador.
+#   - Para ver disponibilidad y crear una reunion (Calendar API) actua como
+#     quien esta preguntando: la reunion queda organizada por esa persona,
+#     no por un bot generico.
+# ---------------------------------------------------------------------------
+GOOGLE_CALENDAR_CREDENTIALS = os.getenv("GOOGLE_CALENDAR_CREDENTIALS", "").strip()
+GOOGLE_WORKSPACE_ADMIN = os.getenv("GOOGLE_WORKSPACE_ADMIN", "").strip()
+
 DRIVE_CACHE_DIR = Path(os.getenv("DRIVE_CACHE_DIR", BASE_DIR / ".drive_cache"))
 # Cada cuanto se vuelve a mirar Drive (solo baja lo que cambio).
 DRIVE_SYNC_TTL = int(os.getenv("DRIVE_SYNC_TTL", "300"))

@@ -438,6 +438,56 @@ def listar_turnos(modalidad=None, forma_trabajo=None, area=None):
     }
 
 
+def _correo_de(contexto):
+    usuario = getattr(contexto, "usuario", None)
+    return (getattr(usuario, "email", "") or "").strip()
+
+
+def salas_disponibles(fecha, hora_inicio, hora_fin, _contexto=None):
+    """Que salas de reuniones estan libres u ocupadas en un rango horario.
+
+    Se consulta "actuando como" quien pregunta (necesita su correo real, no
+    algo que el modelo pueda inventar): por eso recibe `_contexto`, inyectado
+    por chat/asistente.py, y no forma parte del esquema que ve Gemini.
+    """
+    from . import salas
+
+    correo = _correo_de(_contexto)
+    if not correo:
+        return {"error": "No pude identificar tu cuenta para consultar Calendar."}
+    try:
+        return {"salas": salas.disponibilidad(correo, fecha, hora_inicio, hora_fin)}
+    except salas.SalasError as error:
+        return {"error": str(error)}
+
+
+def crear_reunion(sala, fecha, hora_inicio, hora_fin, titulo, invitados=None, _contexto=None):
+    """Reserva una sala y crea el evento en Google Calendar, organizado por
+    quien pregunta (ver salas_disponibles sobre `_contexto`)."""
+    from . import salas as salas_mod
+
+    correo = _correo_de(_contexto)
+    if not correo:
+        return {"creada": False, "motivo": "No pude identificar tu cuenta para crear la reunión."}
+    try:
+        return salas_mod.crear_reunion(correo, sala, fecha, hora_inicio, hora_fin, titulo,
+                                       invitados)
+    except salas_mod.SalasError as error:
+        return {"creada": False, "motivo": str(error)}
+
+
+# Herramientas que necesitan saber quien pregunta (su correo real), no solo
+# los argumentos que arma el modelo: chat/asistente.py les inyecta
+# `_contexto` antes de llamarlas, fuera del esquema que ve Gemini.
+NECESITAN_CONTEXTO = {"salas_disponibles", "crear_reunion"}
+
+# Estas dos hablan con Calendar en tiempo real (disponibilidad que cambia
+# minuto a minuto) o tienen efecto de lado (crean un evento real): cachear su
+# respuesta como cualquier otra pregunta serviria una disponibilidad vieja o
+# escondería que ya se puede volver a intentar. Ver chat/respuestas.py.
+NO_CACHEABLES = {"salas_disponibles", "crear_reunion"}
+
+
 def buscar_politica(consulta):
     """Busca en los documentos internos (politicas, procedimientos)."""
     from .antiprompt import NOTA_DOCUMENTO
@@ -474,6 +524,8 @@ FUNCIONES = {
     "turno_de_persona": turno_de_persona,
     "listar_turnos": listar_turnos,
     "buscar_politica": buscar_politica,
+    "salas_disponibles": salas_disponibles,
+    "crear_reunion": crear_reunion,
 }
 
 _FECHA = {"type": "string", "description": "Fecha en formato AAAA-MM-DD."}
@@ -765,6 +817,64 @@ ESQUEMAS = [
                 "type": "object",
                 "properties": {"consulta": {"type": "string"}},
                 "required": ["consulta"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "salas_disponibles",
+            "description": (
+                "Que salas de reuniones estan libres u ocupadas en un rango "
+                "horario. Usar cuando pidan agendar/reservar una sala, o "
+                "pregunten que salas hay disponibles a cierta hora. Necesita "
+                "fecha y horario exactos: si faltan, preguntalos antes de "
+                "llamarla en vez de asumirlos."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fecha": _FECHA,
+                    "hora_inicio": {"type": "string", "description": "HH:MM, 24 horas."},
+                    "hora_fin": {"type": "string", "description": "HH:MM, 24 horas."},
+                },
+                "required": ["fecha", "hora_inicio", "hora_fin"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "crear_reunion",
+            "description": (
+                "Reserva una sala de reuniones y crea el evento en Google "
+                "Calendar. Usarla SOLO despues de mostrar la disponibilidad "
+                "con salas_disponibles y que la persona elija una sala LIBRE "
+                "por su nombre: nunca reservar una que salas_disponibles "
+                "marco como ocupada, ni elegir la sala sin que la persona la "
+                "haya nombrado."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sala": {
+                        "type": "string",
+                        "description": "Nombre exacto de la sala, tal cual lo devolvio salas_disponibles.",
+                    },
+                    "fecha": _FECHA,
+                    "hora_inicio": {"type": "string", "description": "HH:MM, 24 horas."},
+                    "hora_fin": {"type": "string", "description": "HH:MM, 24 horas."},
+                    "titulo": {
+                        "type": "string",
+                        "description": "Titulo de la reunion. Si no lo dieron, arma uno breve con el motivo mencionado.",
+                    },
+                    "invitados": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Correos de otras personas a invitar. Omitir si no mencionaron a nadie mas.",
+                    },
+                },
+                "required": ["sala", "fecha", "hora_inicio", "hora_fin", "titulo"],
             },
         },
     },

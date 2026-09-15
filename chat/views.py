@@ -83,6 +83,10 @@ def responder_con_modelo(mensaje, historial=None, alias=None, contexto=None):
     return {
         "answer": texto,
         "items": [],
+        # Lista de salas de una llamada a salas_disponibles en este turno,
+        # aparte de lo que el modelo haya redactado en texto: la interfaz la
+        # dibuja tachando la ocupada (chat/asistente.py::_ejecutar_pedidos).
+        "salas": meta.get("salas") or [],
         "meta": {
             "intencion": "modelo",
             "modelo": asistente.modelo(),

@@ -13,6 +13,7 @@ import hashlib
 from django.conf import settings
 from django.core.cache import cache
 
+from . import herramientas
 from .intents import normalizar
 
 # Subir esto invalida todo lo cacheado. Cambiarlo al modificar como se arman las
@@ -49,11 +50,16 @@ def guardar(mensaje, hoy, respuesta, ambito=""):
     Ni "sin_datos" (el modelo dijo que no sabe: puede cambiar si se agrega el
     dato) ni "no_disponible" (Gemini esta caido o sin creditos: si no, se
     seguiria avisando que no responde durante toda la ventana, incluso
-    despues de que el proveedor se recupere) se cachean.
+    despues de que el proveedor se recupere) se cachean. Tampoco una
+    respuesta que uso salas_disponibles o crear_reunion: la disponibilidad de
+    una sala cambia minuto a minuto, y servir del cache aca mostraria una
+    ocupada como libre (o escondería que ya se puede reintentar reservarla).
     """
     if not respuesta:
         return
     meta = respuesta.get("meta", {})
     if meta.get("intencion") in ("sin_datos", "no_disponible", "bloqueada"):
+        return
+    if set(meta.get("herramientas") or []) & herramientas.NO_CACHEABLES:
         return
     cache.set(clave(mensaje, hoy, ambito), respuesta, settings.RESPUESTA_CACHE_TTL)
