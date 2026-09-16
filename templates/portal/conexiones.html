@@ -1,0 +1,80 @@
+{% extends "portal/base.html" %}
+
+{% block titulo %}Conexiones{% endblock %}
+{% block encabezado %}Conexiones{% endblock %}
+{% block subtitulo %}Quién usó a Iris el {{ dia|date:"d-m-Y" }}{% if es_hoy %} (hoy){% endif %}. Click en una fila para ver sus preguntas.{% endblock %}
+{% block nav_conexiones %}activo{% endblock %}
+
+{% block contenido %}
+  <div class="filtros dia-nav">
+    <a href="?dia={{ dia_anterior|date:'Y-m-d' }}">&larr; {{ dia_anterior|date:"d-m" }}</a>
+    {% if not es_hoy %}<a href="{% url 'portal-conexiones' %}" class="activo">Hoy</a>{% endif %}
+    <a href="?dia={{ dia_siguiente|date:'Y-m-d' }}">{{ dia_siguiente|date:"d-m" }} &rarr;</a>
+  </div>
+
+  <section class="resumen">
+    <div class="tarjeta">
+      <span class="num">{{ total_usuarios }}</span>
+      <span class="etiqueta">persona{{ total_usuarios|pluralize }} conectada{{ total_usuarios|pluralize }}</span>
+    </div>
+    <div class="tarjeta">
+      <span class="num">{{ total_consultas }}</span>
+      <span class="etiqueta">consulta{{ total_consultas|pluralize }} a Iris</span>
+    </div>
+    <div class="tarjeta">
+      <span class="num">{{ ips_distintas }}</span>
+      <span class="etiqueta">IP{{ ips_distintas|pluralize }} distinta{{ ips_distintas|pluralize }}</span>
+    </div>
+    <div class="tarjeta{% if total_eventos %} tarjeta-alerta{% endif %}">
+      <span class="num">{{ total_eventos }}</span>
+      <span class="etiqueta">evento{{ total_eventos|pluralize }} de seguridad</span>
+    </div>
+  </section>
+
+  {% if resumen_eventos %}
+    <div class="pills-resumen">
+      {% for r in resumen_eventos %}
+        <span class="pill {{ r.tipo }}">{{ r.etiqueta }} · {{ r.total }}</span>
+      {% endfor %}
+      <a href="{% url 'portal-eventos' %}" class="ver-mas">Ver el detalle en Eventos de seguridad &rarr;</a>
+    </div>
+  {% endif %}
+
+  <table>
+    <thead>
+      <tr>
+        <th>Cuenta</th>
+        <th>Rol</th>
+        <th>Consultas</th>
+        <th>Bloqueadas</th>
+        <th>Sin acceso</th>
+        <th>Primera</th>
+        <th>Última</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in filas %}
+        <tr class="{% if f.usuario %}fila-click{% endif %}"
+            {% if f.usuario %}onclick="location.href='{% url 'portal-conexion-detalle' f.usuario.pk %}?dia={{ dia|date:'Y-m-d' }}'"{% endif %}>
+          <td>{{ f.email|default:"correo desconocido" }}</td>
+          <td><span class="pill {{ f.rol }}">{{ f.rol }}</span></td>
+          <td>{{ f.total }}</td>
+          <td>{% if f.bloqueadas %}<span class="pill injection">{{ f.bloqueadas }}</span>{% else %}0{% endif %}</td>
+          <td>{% if f.sin_acceso %}<span class="pill autz_denegada">{{ f.sin_acceso }}</span>{% else %}0{% endif %}</td>
+          <td class="tenue">{{ f.primera|date:"H:i" }}</td>
+          <td class="tenue">{{ f.ultima|date:"H:i" }}</td>
+          <td>
+            {% if f.usuario %}
+              <a href="{% url 'portal-conexion-detalle' f.usuario.pk %}?dia={{ dia|date:'Y-m-d' }}">Ver preguntas</a>
+            {% else %}
+              <span class="tenue">cuenta eliminada</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="8" class="tenue">Nadie usó el chat este día.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

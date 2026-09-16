@@ -152,6 +152,57 @@ def registrar_evento(tipo, usuario=None, detalle=""):
         pass
 
 
+class ActividadChat(models.Model):
+    """Cada consulta que llega a /api/chat/, con quien la hizo y como se resolvio.
+
+    A diferencia de `Pregunta` (agregada por texto, sin dueño) y
+    `EventoSeguridad` (solo lo que se bloqueó), esta es la bitácora completa
+    por persona: alimenta la pestaña "Conexiones" del portal (qué usuario
+    entró hoy, qué le preguntó a Iris, y con qué resultado — modelo, caché,
+    bloqueada, sin acceso, etc. en `intencion`).
+    """
+
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="actividad_chat",
+    )
+    # Copia del identificador aunque despues se borre el User (igual que en
+    # EventoSeguridad): la fila de actividad sigue siendo legible.
+    email = models.CharField(max_length=254, blank=True, db_index=True)
+    mensaje = models.TextField()
+    intencion = models.CharField(max_length=32, blank=True)
+    desde_cache = models.BooleanField(default=False)
+    ip = models.CharField(max_length=64, blank=True)
+    creado_en = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = "actividad de chat"
+        verbose_name_plural = "actividad de chat"
+        ordering = ["-creado_en"]
+
+    def __str__(self):
+        return f"{self.email or '?'} · {self.mensaje[:60]} · {self.creado_en:%Y-%m-%d %H:%M}"
+
+
+def registrar_actividad(usuario, mensaje, intencion="", desde_cache=False, ip=""):
+    """Anota una consulta al chat, para la pestaña Conexiones del portal.
+    Nunca interrumpe la respuesta si falla."""
+    try:
+        email = ""
+        if usuario is not None and getattr(usuario, "is_authenticated", False):
+            email = (usuario.email or usuario.get_username() or "")[:254]
+        ActividadChat.objects.create(
+            usuario=usuario if (usuario and usuario.is_authenticated) else None,
+            email=email,
+            mensaje=str(mensaje or "")[:2000],
+            intencion=str(intencion or "")[:32],
+            desde_cache=bool(desde_cache),
+            ip=str(ip or "")[:64],
+        )
+    except Exception:  # el registro es secundario; la respuesta manda
+        pass
+
+
 class ConsultaNoResuelta(models.Model):
     """Pregunta que el asistente no supo responder.
 

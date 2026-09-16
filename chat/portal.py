@@ -8,17 +8,21 @@ qué, con la vista cruzada contra BUK que el admin genérico no da.
 """
 
 import functools
+from datetime import datetime, time, timedelta
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.http import HttpResponseForbidden
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods
 
 from . import buk
-from .models import ConsultaNoResuelta, EventoSeguridad, InvitacionRol, PerfilUsuario
+from .models import (
+    ActividadChat, ConsultaNoResuelta, EventoSeguridad, InvitacionRol, PerfilUsuario,
+)
 
 User = get_user_model()
 
@@ -154,6 +158,116 @@ def usuarios(request):
         "rol_defecto": PerfilUsuario.ROL_DEFECTO,
         "invitaciones": InvitacionRol.objects.all(),
         "dominio": settings.GOOGLE_WORKSPACE_DOMAIN,
+    })
+
+
+def _rango_del_dia(valor):
+    """(dia, inicio, fin) del dia local `valor` (YYYY-MM-DD). Si no calza el
+    formato o viene vacio, usa el dia de hoy (zona horaria del proyecto)."""
+    try:
+        dia = datetime.strptime(valor, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        dia = timezone.localdate()
+    tz = timezone.get_current_timezone()
+    inicio = timezone.make_aware(datetime.combine(dia, time.min), tz)
+    fin = timezone.make_aware(datetime.combine(dia, time.max), tz)
+    return dia, inicio, fin
+
+
+@never_cache
+@_solo_staff
+@require_http_methods(["GET"])
+def conexiones(request):
+    """Quien uso a Iris en un dia (por defecto hoy): cuantas consultas hizo,
+    con que resultado (modelo, cache, bloqueada, sin acceso...), y un resumen
+    de seguridad del mismo dia. Cada fila lleva a `conexion_detalle`, con
+    cada pregunta puntual de esa persona ese dia.
+    """
+    from django.db.models import Count, Max, Min, Q
+
+    dia, inicio, fin = _rango_del_dia(request.GET.get("dia") or "")
+    actividad_dia = ActividadChat.objects.filter(creado_en__gte=inicio, creado_en__lte=fin)
+
+    por_usuario = list(
+        actividad_dia.values("usuario_id", "email")
+        .annotate(
+            total=Count("id"),
+            primera=Min("creado_en"),
+            ultima=Max("creado_en"),
+            bloqueadas=Count("id", filter=Q(intencion="bloqueada")),
+            sin_acceso=Count("id", filter=Q(intencion="sin_acceso")),
+        )
+        .order_by("-ultima")
+    )
+
+    usuarios = {u.pk: u for u in User.objects.filter(
+        pk__in=[f["usuario_id"] for f in por_usuario if f["usuario_id"]])}
+    perfiles = {p.usuario_id: p for p in PerfilUsuario.objects.all()}
+
+    filas = []
+    for f in por_usuario:
+        usuario = usuarios.get(f["usuario_id"])
+        perfil = perfiles.get(f["usuario_id"])
+        filas.append({
+            **f,
+            "usuario": usuario,
+            "rol": perfil.rol if perfil else PerfilUsuario.ROL_DEFECTO,
+        })
+
+    eventos_dia = EventoSeguridad.objects.filter(creado_en__gte=inicio, creado_en__lte=fin)
+    tipos_legibles = dict(EventoSeguridad.TIPOS)
+    resumen_eventos = list(eventos_dia.values("tipo").annotate(total=Count("id"))
+                           .order_by("-total"))
+    for r in resumen_eventos:
+        r["etiqueta"] = tipos_legibles.get(r["tipo"], r["tipo"])
+
+    ips_distintas = (actividad_dia.exclude(ip="").values_list("ip", flat=True).distinct().count())
+
+    return render(request, "portal/conexiones.html", {
+        "dia": dia,
+        "dia_anterior": dia - timedelta(days=1),
+        "dia_siguiente": dia + timedelta(days=1),
+        "es_hoy": dia == timezone.localdate(),
+        "filas": filas,
+        "total_consultas": actividad_dia.count(),
+        "total_usuarios": len(filas),
+        "resumen_eventos": resumen_eventos,
+        "total_eventos": eventos_dia.count(),
+        "ips_distintas": ips_distintas,
+    })
+
+
+@never_cache
+@_solo_staff
+@require_http_methods(["GET"])
+def conexion_detalle(request, usuario_id):
+    """Cada pregunta que una persona concreta le hizo a Iris en un dia, y los
+    eventos de seguridad que le tocaron ese mismo dia (bloqueos, limites).
+    """
+    usuario = get_object_or_404(User, pk=usuario_id)
+    dia, inicio, fin = _rango_del_dia(request.GET.get("dia") or "")
+
+    mensajes = ActividadChat.objects.filter(
+        usuario=usuario, creado_en__gte=inicio, creado_en__lte=fin
+    ).order_by("-creado_en")
+    eventos_usuario = EventoSeguridad.objects.filter(
+        usuario=usuario, creado_en__gte=inicio, creado_en__lte=fin
+    ).order_by("-creado_en")
+
+    perfil = PerfilUsuario.objects.filter(usuario=usuario).first()
+    ips = sorted({m for m in mensajes.exclude(ip="").values_list("ip", flat=True)})
+
+    return render(request, "portal/conexion_detalle.html", {
+        "usuario": usuario,
+        "rol": perfil.rol if perfil else PerfilUsuario.ROL_DEFECTO,
+        "dia": dia,
+        "dia_anterior": dia - timedelta(days=1),
+        "dia_siguiente": dia + timedelta(days=1),
+        "es_hoy": dia == timezone.localdate(),
+        "mensajes": mensajes[:500],
+        "eventos": eventos_usuario[:200],
+        "total": mensajes.count(),
+        "ips": ips,
     })
 
 

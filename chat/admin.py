@@ -12,7 +12,7 @@ a cubrir, que no vinieron de una pregunta real en el chat.
 
 from django.contrib import admin, messages
 
-from .models import (ConsultaNoResuelta, EventoSeguridad, InvitacionRol,
+from .models import (ActividadChat, ConsultaNoResuelta, EventoSeguridad, InvitacionRol,
                      PerfilUsuario, Pregunta, Propuesta)
 
 
@@ -70,6 +70,23 @@ class EventoSeguridadAdmin(admin.ModelAdmin):
     list_display = ("creado_en", "tipo", "email", "detalle")
     list_filter = ("tipo", "creado_en")
     search_fields = ("email", "detalle")
+    ordering = ("-creado_en",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ActividadChat)
+class ActividadChatAdmin(admin.ModelAdmin):
+    """Solo lectura: el trabajo del dia a dia va en /portal/conexiones/, esto
+    es el respaldo (y sirve para buscar por correo o texto puntual)."""
+
+    list_display = ("creado_en", "email", "intencion", "desde_cache", "ip")
+    list_filter = ("intencion", "desde_cache", "creado_en")
+    search_fields = ("email", "mensaje", "ip")
     ordering = ("-creado_en",)
 
     def has_add_permission(self, request):

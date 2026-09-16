@@ -42,6 +42,17 @@ TIPOS_VACACION_PLURAL = {
 
 MEDIA_JORNADA = ("start_working_day", "end_working_day")
 
+# Estado de una solicitud de vacaciones/licencia/permiso, para "en que estado
+# esta mi dia administrativo/permiso" (distinto de ESTADOS_BENEFICIO: son dos
+# modulos separados de BUK, con sus propios codigos de estado).
+ESTADOS_SOLICITUD = {
+    "approved": "aprobada",
+    "requested": "pendiente",
+    "pending": "pendiente",
+    "rejected": "rechazada",
+    "cancelled": "cancelada",
+}
+
 # Del cumpleanos solo se guarda "MM-DD". El anio revela la edad, que no hace
 # falta para saludar a nadie y es un dato sensible: no cruza esta capa.
 CAMPOS_PUBLICOS_DOC = ("id", "nombre", "apodo", "cargo", "familia", "area", "cumple")
@@ -307,13 +318,16 @@ def _cubre(registro, desde, hasta):
 
 
 def _normalizar_vacacion(registro):
+    estado = registro.get("status")
     return {
         "employee_id": registro.get("employee_id"),
         "categoria": "vacaciones",
         "detalle": TIPOS_VACACION.get(registro.get("type"), registro.get("type") or ""),
         "start_date": registro.get("start_date"),
         "end_date": registro.get("end_date"),
-        "status": registro.get("status"),
+        "status": estado,
+        "estado": ESTADOS_SOLICITUD.get(estado, estado or "?"),
+        "solicitado": (registro.get("requested_at") or "")[:10] or None,
         "media_jornada": registro.get("workday_stage") in MEDIA_JORNADA,
         "dias_habiles": registro.get("working_days"),
     }
@@ -322,21 +336,31 @@ def _normalizar_vacacion(registro):
 def _normalizar_ausencia(registro, categoria):
     # `licence_type` (pre_natal, accidente_comun, ...) es informacion de salud.
     # Se descarta aca, en el borde: nunca entra al resto de la aplicacion.
+    estado = registro.get("status")
     return {
         "employee_id": registro.get("employee_id"),
         "categoria": categoria,
         "detalle": "",
         "start_date": registro.get("start_date"),
         "end_date": registro.get("end_date"),
-        "status": registro.get("status"),
+        "status": estado,
+        "estado": ESTADOS_SOLICITUD.get(estado, estado or "?"),
+        "solicitado": (registro.get("created_at") or "")[:10] or None,
         "media_jornada": bool(registro.get("half_working_day")),
         "dias_habiles": None,
     }
 
 
-def vacaciones(desde, hasta):
-    """Vacaciones vigentes en el rango. Ver nota del modulo sobre `date`."""
-    clave = f"buk:vac:{desde}:{hasta}"
+def vacaciones(desde, hasta, incluir_todas=False):
+    """Vacaciones vigentes en el rango. Ver nota del modulo sobre `date`.
+
+    `incluir_todas`: por defecto se excluyen las rechazadas (una rechazada no
+    saca a nadie de su jornada). Para consultar el ESTADO de una solicitud
+    puntual (estado_solicitudes en herramientas.py) hace falta verla igual,
+    asi que esta se deja entrar con `incluir_todas=True` -en cache aparte,
+    para no mezclarla con la lista que usa "quien esta afuera".
+    """
+    clave = f"buk:vac:{desde}:{hasta}:{int(incluir_todas)}"
     cacheado = cache.get(clave)
     if cacheado is not None:
         return cacheado, 0
@@ -346,15 +370,19 @@ def vacaciones(desde, hasta):
     vigentes = [
         _normalizar_vacacion(r)
         for r in registros
-        if r.get("status") != "rejected" and _cubre(r, desde, hasta)
+        if (incluir_todas or r.get("status") != "rejected") and _cubre(r, desde, hasta)
     ]
     cache.set(clave, vigentes, settings.BUK_ABSENCE_CACHE_TTL)
     return vigentes, hechos
 
 
-def ausencias(desde, hasta, categorias=None):
-    """Licencias, permisos e inasistencias del rango. BUK filtra por solapamiento."""
-    clave = f"buk:aus:{desde}:{hasta}"
+def ausencias(desde, hasta, categorias=None, incluir_todas=False):
+    """Licencias, permisos e inasistencias del rango. BUK filtra por solapamiento.
+
+    Ver nota de `incluir_todas` en `vacaciones()`: misma idea, aca del lado
+    de licencias/permisos/inasistencias.
+    """
+    clave = f"buk:aus:{desde}:{hasta}:{int(incluir_todas)}"
     cacheado = cache.get(clave)
     if cacheado is None:
         registros, hechos = _paginar(
@@ -369,7 +397,7 @@ def ausencias(desde, hasta, categorias=None):
         cacheado = [
             _normalizar_ausencia(r, por_tipo[r["type"]])
             for r in registros
-            if r.get("status") != "rejected" and r.get("type") in por_tipo
+            if (incluir_todas or r.get("status") != "rejected") and r.get("type") in por_tipo
         ]
         cache.set(clave, cacheado, settings.BUK_ABSENCE_CACHE_TTL)
     else:

@@ -12,4 +12,7 @@ urlpatterns = [
     path("portal/", portal.usuarios, name="portal-usuarios"),
     path("portal/preguntas/", portal.preguntas, name="portal-preguntas"),
     path("portal/eventos/", portal.eventos, name="portal-eventos"),
+    path("portal/conexiones/", portal.conexiones, name="portal-conexiones"),
+    path("portal/conexiones/<int:usuario_id>/", portal.conexion_detalle,
+         name="portal-conexion-detalle"),
 ]

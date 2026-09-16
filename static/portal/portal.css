@@ -94,3 +94,26 @@ html, body { background: #eef0f4; color: #1b1d29; }
 .portal .filtros a { color: #5b5f73; text-decoration: none; margin-right: 14px; }
 .portal .filtros a.activo { color: #14162a; font-weight: 700; }
 .portal .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+
+.portal .dia-nav { display: flex; align-items: center; gap: 16px; }
+.portal .resumen { display: flex; gap: 12px; flex-wrap: wrap; margin: 4px 0 18px; }
+.portal .tarjeta {
+  flex: 1 1 150px;
+  background: #f7f8fc;
+  border: 1px solid #e2e4ec;
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.portal .tarjeta.tarjeta-alerta { background: #fde7e7; border-color: #f3c9c9; }
+.portal .tarjeta .num { font-size: 1.5rem; font-weight: 900; color: #14162a; }
+.portal .tarjeta .etiqueta { color: #5b5f73; font-size: .82rem; }
+.portal .pills-resumen { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
+.portal .pills-resumen .ver-mas { font-size: .85rem; color: #5b5f73; text-decoration: none; margin-left: 6px; }
+.portal .subtitulo-seccion { font-size: .98rem; margin: 24px 0 8px; color: #14162a; }
+.portal tbody tr.fila-click { cursor: pointer; }
+.portal .pill.bloqueada, .portal .pill.entrada_larga { background: #fde7e7; color: #b3261e; }
+.portal .pill.presupuesto { background: #fff1df; color: #a45c00; }
+.portal .pill.sin_datos, .portal .pill.modelo { background: #e8ebf6; color: #33406b; }

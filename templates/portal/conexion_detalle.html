@@ -1,0 +1,73 @@
+{% extends "portal/base.html" %}
+
+{% block titulo %}{{ usuario.email|default:usuario.username }}{% endblock %}
+{% block encabezado %}{{ usuario.email|default:usuario.username }}{% endblock %}
+{% block subtitulo %}Preguntas y actividad del {{ dia|date:"d-m-Y" }}{% if es_hoy %} (hoy){% endif %}.{% endblock %}
+{% block nav_conexiones %}activo{% endblock %}
+
+{% block contenido %}
+  <p><a href="{% url 'portal-conexiones' %}?dia={{ dia|date:'Y-m-d' }}">&larr; Volver a Conexiones</a></p>
+
+  <div class="filtros dia-nav">
+    <a href="?dia={{ dia_anterior|date:'Y-m-d' }}">&larr; {{ dia_anterior|date:"d-m" }}</a>
+    {% if not es_hoy %}<a href="{% url 'portal-conexion-detalle' usuario.pk %}" class="activo">Hoy</a>{% endif %}
+    <a href="?dia={{ dia_siguiente|date:'Y-m-d' }}">{{ dia_siguiente|date:"d-m" }} &rarr;</a>
+  </div>
+
+  <section class="resumen">
+    <div class="tarjeta">
+      <span class="num">{{ total }}</span>
+      <span class="etiqueta">consulta{{ total|pluralize }} este día</span>
+    </div>
+    <div class="tarjeta">
+      <span class="pill {{ rol }}">{{ rol }}</span>
+      <span class="etiqueta">rol actual</span>
+    </div>
+    <div class="tarjeta">
+      <span class="num">{{ ips|length }}</span>
+      <span class="etiqueta">IP{{ ips|length|pluralize }} usada{{ ips|length|pluralize }}{% if ips %}: {{ ips|join:", " }}{% endif %}</span>
+    </div>
+  </section>
+
+  {% if eventos %}
+    <h2 class="subtitulo-seccion">Eventos de seguridad de este día</h2>
+    <table>
+      <thead><tr><th>Cuándo</th><th>Tipo</th><th>Detalle</th></tr></thead>
+      <tbody>
+        {% for e in eventos %}
+          <tr>
+            <td class="tenue">{{ e.creado_en|date:"H:i" }}</td>
+            <td><span class="pill {{ e.tipo }}">{{ e.get_tipo_display }}</span></td>
+            <td>{{ e.detalle|default:"" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+
+  <h2 class="subtitulo-seccion">Preguntas a Iris</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Hora</th>
+        <th>Pregunta</th>
+        <th>Resultado</th>
+        <th>Caché</th>
+        <th>IP</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in mensajes %}
+        <tr>
+          <td class="tenue">{{ m.creado_en|date:"H:i:s" }}</td>
+          <td>{{ m.mensaje }}</td>
+          <td><span class="pill {{ m.intencion }}">{{ m.intencion|default:"—" }}</span></td>
+          <td class="tenue">{% if m.desde_cache %}sí{% else %}no{% endif %}</td>
+          <td class="tenue">{{ m.ip|default:"—" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="tenue">Sin consultas este día.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

@@ -11,7 +11,9 @@ from django.views.decorators.http import require_GET, require_POST
 
 from . import antiprompt, asistente, autorizacion, buk, documentos, perfil, ratelimit, respuestas
 from .forms import PropuestaForm
-from .models import EventoSeguridad, PerfilUsuario, contar, registrar, registrar_evento
+from .models import (
+    EventoSeguridad, PerfilUsuario, contar, registrar, registrar_actividad, registrar_evento,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +240,7 @@ def api_status(request):
 @require_POST
 def chat_message(request):
     usuario = request.user
+    ip = _client_ip(request)
 
     # 1. Frecuencia: rafaga corta y tope por hora, por usuario.
     if (ratelimit.excedido(f"chat:{usuario.pk}", settings.RATE_LIMIT_CHAT)
@@ -259,6 +262,7 @@ def chat_message(request):
     # 2. Largo: una consulta enorme solo infla el costo del modelo.
     if len(mensaje) > settings.ASISTENTE_MAX_CARACTERES:
         registrar_evento(EventoSeguridad.ENTRADA_LARGA, usuario, f"{len(mensaje)} caracteres")
+        registrar_actividad(usuario, mensaje, "entrada_larga", ip=ip)
         return JsonResponse(
             {"error": f"La consulta es muy larga (máximo "
                       f"{settings.ASISTENTE_MAX_CARACTERES} caracteres)."},
@@ -267,6 +271,7 @@ def chat_message(request):
     # 3. Inyeccion de prompt: se corta antes de gastar una llamada a Gemini.
     if antiprompt.es_sospechosa(mensaje):
         registrar_evento(EventoSeguridad.INJECTION, usuario, mensaje[:200])
+        registrar_actividad(usuario, mensaje, "bloqueada", ip=ip)
         return JsonResponse({
             "answer": ("No puedo procesar esa consulta. Si es una pregunta real sobre "
                        "Azerta, reformúlala sin instrucciones para el asistente."),
@@ -282,6 +287,7 @@ def chat_message(request):
     # cual en vez de caer en el error generico.
     if ctx.rol == PerfilUsuario.SIN_ACCESO:
         registrar_evento(EventoSeguridad.AUTZ_DENEGADA, usuario, "rol sin_acceso")
+        registrar_actividad(usuario, mensaje, "sin_acceso", ip=ip)
         return JsonResponse({
             "answer": autorizacion.MSG_SIN_ACCESO,
             "items": [], "meta": {"intencion": "sin_acceso", "requests_buk": 0},
@@ -306,11 +312,14 @@ def chat_message(request):
         cacheada["meta"] = {**cacheada.get("meta", {}), "desde_cache": True,
                             "requests_buk": 0}
         contar(mensaje, cacheada["meta"].get("intencion"), desde_cache=True)
+        registrar_actividad(usuario, mensaje, cacheada["meta"].get("intencion"),
+                           desde_cache=True, ip=ip)
         return JsonResponse(cacheada)
 
     # 5. Cupo diario de consultas al modelo, por usuario.
     if not _presupuesto_llm_ok(usuario):
         registrar_evento(EventoSeguridad.PRESUPUESTO, usuario, "límite diario")
+        registrar_actividad(usuario, mensaje, "presupuesto", ip=ip)
         return JsonResponse({
             "answer": "Alcanzaste el máximo de consultas por hoy. Vuelve a intentar mañana.",
             "items": [], "meta": {"intencion": "presupuesto", "requests_buk": 0},
@@ -332,4 +341,5 @@ def chat_message(request):
     if es_primer_mensaje:
         respuestas.guardar(mensaje, hoy, respuesta, ambito)
     contar(mensaje, respuesta["meta"].get("intencion"))
+    registrar_actividad(usuario, mensaje, respuesta["meta"].get("intencion"), ip=ip)
     return JsonResponse(respuesta)

@@ -82,6 +82,64 @@ def ausencias_de_persona(nombre, desde=None, hasta=None):
     }
 
 
+def estado_solicitudes(nombre, desde=None, hasta=None):
+    """En que estado esta(n) la(s) solicitud(es) de vacaciones/dia
+    administrativo/licencia/permiso de una persona (aprobada, pendiente,
+    rechazada).
+
+    A diferencia de ausencias_de_persona (que dice si alguien esta o va a
+    estar fuera, y para eso descarta las rechazadas y no distingue estado),
+    esta trae CUALQUIER solicitud que se solape con el rango -aprobada,
+    pendiente o rechazada- con su estado explicito. Es la que responde "en
+    que va mi permiso/dia administrativo del 20 de octubre", no si esa
+    persona va a estar presente ese dia.
+    """
+    directorio, _ = buk.directorio()
+    ids, _ = personas.buscar(nombre or "", directorio)
+
+    if not ids:
+        return {"encontrada": False, "motivo": "No hay nadie con ese nombre en la nomina activa."}
+    if len(ids) > 1:
+        return {
+            "encontrada": False,
+            "motivo": "El nombre coincide con varias personas.",
+            "candidatos": sorted(directorio[i]["nombre"] for i in ids)[:8],
+        }
+
+    pid = next(iter(ids))
+    hoy = date.today()
+    # Sin fechas: ventana amplia (solicitudes recientes + las que vienen). Con
+    # solo "desde" (una fecha puntual por la que preguntan): un solo dia, para
+    # encontrar la solicitud que la cubre, igual que ausencias_de_persona.
+    d1 = _fecha(desde, hoy - timedelta(days=60))
+    d2 = _fecha(hasta, d1 if desde else hoy + timedelta(days=180))
+
+    vac, _ = buk.vacaciones(d1, d2, incluir_todas=True)
+    aus, _ = buk.ausencias(d1, d2, incluir_todas=True)
+    suyas = sorted(
+        (r for r in vac + aus if r["employee_id"] == pid),
+        key=lambda r: r["start_date"] or "",
+    )
+
+    return {
+        "encontrada": True,
+        "nombre": directorio[pid]["nombre"],
+        "rango": {"desde": d1.isoformat(), "hasta": d2.isoformat()},
+        "total": len(suyas),
+        "solicitudes": [
+            {
+                "tipo": r["detalle"] or buk.CATEGORIAS.get(r["categoria"], {}).get(
+                    "etiqueta", r["categoria"]),
+                "desde": r["start_date"],
+                "hasta": r["end_date"],
+                "estado": r["estado"],
+                "solicitado": r["solicitado"],
+            }
+            for r in suyas[:MAX_PERSONAS]
+        ],
+    }
+
+
 def info_persona(nombre):
     """Quien es una persona: cargo, area, correo corporativo y cuentas/clientes
     que atiende.
@@ -526,6 +584,7 @@ def buscar_politica(consulta):
 FUNCIONES = {
     "listar_ausencias": listar_ausencias,
     "ausencias_de_persona": ausencias_de_persona,
+    "estado_solicitudes": estado_solicitudes,
     "info_persona": info_persona,
     "equipo_de": equipo_de,
     "persona_por_cargo": persona_por_cargo,
@@ -591,6 +650,39 @@ ESQUEMAS = [
                 "properties": {
                     "nombre": {"type": "string"},
                     "desde": _FECHA,
+                    "hasta": _FECHA,
+                },
+                "required": ["nombre"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "estado_solicitudes",
+            "description": (
+                "En que estado esta la solicitud de vacaciones, dia "
+                "administrativo, licencia o permiso de UNA persona: "
+                "aprobada, pendiente o rechazada. Usar para 'en que va mi "
+                "dia administrativo', 'me aprobaron las vacaciones del 20 de "
+                "octubre', 'esta pendiente el permiso de X'. Distinto de "
+                "ausencias_de_persona: esa dice si alguien esta o va a estar "
+                "fuera (y para eso ignora lo rechazado); esta muestra "
+                "CUALQUIER solicitud con su estado real, la use quien la "
+                "pidio o alguien mas."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "nombre": {"type": "string"},
+                    "desde": {
+                        "type": "string",
+                        "description": (
+                            "Fecha puntual por la que preguntan (AAAA-MM-DD), si la "
+                            "dieron. Omitir para buscar en una ventana amplia "
+                            "(ultimos 60 dias y proximos 180)."
+                        ),
+                    },
                     "hasta": _FECHA,
                 },
                 "required": ["nombre"],
