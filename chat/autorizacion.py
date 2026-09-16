@@ -29,10 +29,6 @@ logger = logging.getLogger(__name__)
 
 # Herramientas que devuelven una lista de personas: se filtran a la jerarquía.
 TOOLS_LISTADO = {"listar_ausencias", "quien_esta_trabajando", "equipo_de", "listar_turnos"}
-# Herramientas que hablan de UNA persona nombrada: se niegan si está fuera de
-# alcance, con aviso explícito (decisión del proyecto).
-TOOLS_PERSONA = {"info_persona", "ausencias_de_persona", "cumpleanos_de_persona",
-                 "beneficios_de_persona"}
 # Resuelve a una persona por el texto de un cargo, no por nombre.
 TOOLS_CARGO = {"persona_por_cargo"}
 
@@ -57,6 +53,7 @@ MATRIZ_EJECUTIVO = {
     "equipo_de": PARES,
     "info_persona": PARES,
     "ausencias_de_persona": PARES,
+    "estado_solicitudes": PARES,
     "cumpleanos_de_persona": PARES,
     "persona_por_cargo": PARES,
     "turno_de_persona": PARES,

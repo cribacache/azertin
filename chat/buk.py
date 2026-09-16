@@ -37,13 +37,6 @@ TIPOS_VACACION = {
     "dias_adicionales": "día adicional",
 }
 
-TIPOS_VACACION_PLURAL = {
-    "legales": "vacaciones",
-    "dias_administrativos": "días administrativos",
-    "progresivas": "vacaciones progresivas",
-    "dias_adicionales": "días adicionales",
-}
-
 MEDIA_JORNADA = ("start_working_day", "end_working_day")
 
 # Estado de una solicitud de vacaciones/licencia/permiso, para "en que estado

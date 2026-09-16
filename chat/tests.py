@@ -2829,6 +2829,24 @@ class AutorizacionTests(TestCase):
         self.assertEqual(salida["total"], 2)
 
     @patch("chat.autorizacion.buk.directorio", return_value=(DIRECTORIO_FAM, 0))
+    def test_estado_solicitudes_permitido_para_un_par(self, _dir):
+        """Se agrego junto con la herramienta y quedo afuera de la matriz al
+        principio: sin clasificar, MATRIZ_EJECUTIVO la negaba para
+        cualquier ejecutivo (default-deny, no una fuga de datos, pero
+        tampoco lo que se queria)."""
+        from chat import autorizacion
+        salida = autorizacion.ejecutar(_ctx(), "estado_solicitudes",
+                                       {"nombre": "Ema"}, lambda: {"ok": "par"})
+        self.assertEqual(salida, {"ok": "par"})
+
+    @patch("chat.autorizacion.buk.directorio", return_value=(DIRECTORIO_FAM, 0))
+    def test_estado_solicitudes_denegado_fuera_de_la_familia(self, _dir):
+        from chat import autorizacion
+        salida = autorizacion.ejecutar(_ctx(), "estado_solicitudes",
+                                       {"nombre": "Gina"}, lambda: {"ok": "no deberia"})
+        self.assertIs(salida["autorizado"], False)
+
+    @patch("chat.autorizacion.buk.directorio", return_value=(DIRECTORIO_FAM, 0))
     def test_turno_de_persona_permitido_para_un_par(self, _dir):
         from chat import autorizacion
         salida = autorizacion.ejecutar(_ctx(), "turno_de_persona",

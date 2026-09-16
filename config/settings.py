@@ -10,7 +10,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-change-me")
-DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
+# Default False: si algun deploy futuro se olvida de fijar DJANGO_DEBUG, que
+# falle CERRADO (sin paginas de error con traceback/settings) y no abierto.
+DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() == "true"
 def _ip_local():
     """IP de esta maquina en la red local, para servir a otros equipos.
 

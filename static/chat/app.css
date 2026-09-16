@@ -421,7 +421,7 @@ body::after {
 /* ---------- pie: aviso de fase beta ---------- */
 .pie {
   flex: none;
-  text-align: center;
+  text-align: left;
   padding-top: 4px;
 }
 
