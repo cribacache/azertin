@@ -22,10 +22,17 @@ def _fecha(valor, por_defecto=None):
 def _persona_publica(registro, directorio):
     persona = directorio.get(registro["employee_id"]) or {}
     cfg = buk.CATEGORIAS.get(registro["categoria"], {})
+    # "detalle" trae el subtipo real cuando BUK lo distingue (vacaciones:
+    # feriado legal, dia administrativo, vacacion progresiva, dia adicional).
+    # Sin esto, alguien con dia administrativo aparecia como "vacaciones" a
+    # secas: mucho mas generico de lo que Iris ya sabia. Licencia/permiso/
+    # inasistencia no tienen ese detalle (BUK no lo distingue mas alla del
+    # tipo), asi que ahi se sigue mostrando la etiqueta de la categoria.
+    tipo = registro.get("detalle") or cfg.get("etiqueta", registro["categoria"])
     return {
         "nombre": persona.get("nombre") or f"Empleado #{registro['employee_id']}",
         "cargo": persona.get("cargo") or "",
-        "tipo": cfg.get("etiqueta", registro["categoria"]),
+        "tipo": tipo,
         "desde": registro["start_date"],
         "hasta": registro["end_date"],
         "media_jornada": bool(registro.get("media_jornada")),

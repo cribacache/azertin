@@ -193,6 +193,18 @@ class HerramientasTests(TestCase):
         self.assertEqual(datos["total"], 3)
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_listar_ausencias_muestra_el_subtipo_de_vacacion(self, mocked):
+        """Antes "tipo" mostraba la etiqueta generica de la categoria
+        ("vacaciones") para cualquier subtipo; ahora distingue dia
+        administrativo/feriado legal/etc -el detalle que buk ya calculaba
+        pero herramientas.py descartaba."""
+        from chat import herramientas
+        datos = herramientas.listar_ausencias(_f(0), _f(0))
+        tipos_de_luis = {p["tipo"] for p in datos["personas"] if p["nombre"] == "Luis Soto"}
+        self.assertIn("día administrativo", tipos_de_luis)
+        self.assertNotIn("vacaciones", tipos_de_luis)
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
     def test_listar_ausencias_no_expone_datos_sensibles(self, mocked):
         from chat import herramientas
         datos = herramientas.listar_ausencias(_f(-2), _f(2))
@@ -209,6 +221,13 @@ class HerramientasTests(TestCase):
         self.assertTrue(datos["encontrada"])
         self.assertEqual(datos["nombre"], "Ana Rojas")
         self.assertEqual(len(datos["ausencias"]), 1)
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_ausencias_de_persona_muestra_el_subtipo_de_vacacion(self, mocked):
+        from chat import herramientas
+        datos = herramientas.ausencias_de_persona("Luis", _f(0), _f(0))
+        tipos = {a["tipo"] for a in datos["ausencias"]}
+        self.assertIn("día administrativo", tipos)
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     def test_ausencias_de_persona_nombre_desconocido(self, mocked):
