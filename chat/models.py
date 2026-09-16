@@ -15,8 +15,10 @@ class PerfilUsuario(models.Model):
     - `sin_acceso`: no puede usar el chat (baja, contratista, cuenta de
       servicio que igual inició sesión).
 
-    Un `User` sin fila acá se trata como `ROL_DEFECTO` (ejecutivo): una alta
-    nueva entra acotada, no bloqueada, y el staff la sube si corresponde.
+    Un `User` sin fila acá se trata como `ROL_DEFECTO` (sin_acceso): una alta
+    nueva entra BLOQUEADA por defecto, no acotada -el staff tiene que darle
+    un rol desde /portal/ (o dejarselo listo de antemano con InvitacionRol)
+    para que pueda usar el chat.
     """
 
     GERENCIA = "gerencia"
@@ -27,7 +29,7 @@ class PerfilUsuario(models.Model):
         (EJECUTIVO, "Ejecutivo — acceso acotado a su jerarquía"),
         (SIN_ACCESO, "Sin acceso — no puede usar el chat"),
     ]
-    ROL_DEFECTO = EJECUTIVO
+    ROL_DEFECTO = SIN_ACCESO
 
     usuario = models.OneToOneField(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="perfil"
@@ -55,12 +57,12 @@ class PerfilUsuario(models.Model):
 class InvitacionRol(models.Model):
     """Rol pre-asignado a un correo que todavía no inició sesión.
 
-    Sin esto, alguien nuevo entra con `PerfilUsuario.ROL_DEFECTO` (ejecutivo)
-    y el staff recién puede subirle el rol DESPUÉS de que esa persona ya
-    inició sesión al menos una vez (tiene que existir el `User` para que
-    `PerfilUsuario` lo referencie). Esto deja el rol listo de antemano por
-    correo, para no depender de acordarse de subirlo apenas alguien entra
-    por primera vez.
+    Sin esto, alguien nuevo entra con `PerfilUsuario.ROL_DEFECTO` (sin_acceso,
+    bloqueado) y el staff recién puede darle un rol DESPUÉS de que esa
+    persona ya inició sesión al menos una vez (tiene que existir el `User`
+    para que `PerfilUsuario` lo referencie). Esto deja el rol listo de
+    antemano por correo, para que pueda usar el chat desde su primer login
+    en vez de esperar a que el staff se acuerde de habilitarla.
 
     Se aplica sola en el primer login de Google con ese correo
     (`chat/adapters.py::SoloAzertaSocialAdapter.save_user`) y se borra al

@@ -151,8 +151,16 @@ class _ClienteAutenticado(Client):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         from django.contrib.auth.models import User
+        from chat.models import PerfilUsuario
         usuario, _ = User.objects.get_or_create(
             username="pruebas@azerta.cl", defaults={"email": "pruebas@azerta.cl"})
+        # Desde que el rol por defecto (sin fila en PerfilUsuario) paso a ser
+        # sin_acceso, este usuario de pruebas necesita uno explicito para que
+        # el resto de la suite (que prueba OTRA cosa, no esta politica) siga
+        # pudiendo preguntarle algo a Iris. La politica en si la prueba
+        # RolYPerfilTests, con un usuario SIN este perfil.
+        PerfilUsuario.objects.get_or_create(
+            usuario=usuario, defaults={"rol": PerfilUsuario.EJECUTIVO})
         self.force_login(usuario)
 
 
@@ -969,8 +977,13 @@ class SaludoPorNombreTests(TestCase):
 
     def _loguear_como(self, email):
         from django.contrib.auth.models import User
+        from chat.models import PerfilUsuario
         usuario, _ = User.objects.get_or_create(
             username=email, defaults={"email": email})
+        # Rol explicito: desde que el rol por defecto paso a ser sin_acceso,
+        # sin esto quedaria bloqueado antes de llegar a asistente.responder.
+        PerfilUsuario.objects.get_or_create(
+            usuario=usuario, defaults={"rol": PerfilUsuario.EJECUTIVO})
         self.client.force_login(usuario)
 
     def _preguntar(self, texto, mock_cliente, respuesta="Todo tranquilo."):
@@ -2887,11 +2900,14 @@ class PerfilContextoTests(TestCase):
 
 
 class RolYPerfilTests(TestCase):
-    def test_rol_por_defecto_es_ejecutivo(self):
+    def test_rol_por_defecto_es_sin_acceso(self):
+        """Una alta nueva, sin PerfilUsuario todavia, entra BLOQUEADA: solo
+        puede usar el chat quien tiene un rol asignado explicitamente (a mano
+        en /portal/, o de antemano con InvitacionRol)."""
         from django.contrib.auth.models import User
         from chat.models import rol_de
         u = User.objects.create(username="nuevo@azerta.cl", email="nuevo@azerta.cl")
-        self.assertEqual(rol_de(u), "ejecutivo")
+        self.assertEqual(rol_de(u), "sin_acceso")
 
     def test_superuser_es_gerencia(self):
         from django.contrib.auth.models import User
@@ -3019,11 +3035,30 @@ class ActividadChatTests(TestCase):
         from django.contrib.auth.models import User
         from chat.models import ActividadChat, PerfilUsuario
         usuario = User.objects.get(email="pruebas@azerta.cl")
-        PerfilUsuario.objects.create(usuario=usuario, rol=PerfilUsuario.SIN_ACCESO)
+        PerfilUsuario.objects.filter(usuario=usuario).update(rol=PerfilUsuario.SIN_ACCESO)
         self.client.post("/api/chat/", data=json.dumps({"message": "cuanto gano?"}),
                          content_type="application/json")
         fila = ActividadChat.objects.get()
         self.assertEqual(fila.intencion, "sin_acceso")
+
+    def test_un_usuario_nuevo_sin_rol_asignado_queda_bloqueado(self):
+        """De punta a punta: alguien que recien inicia sesion, sin que el
+        staff le haya dado un rol todavia, no debe poder preguntarle nada a
+        Iris (ver RolYPerfilTests.test_rol_por_defecto_es_sin_acceso)."""
+        from django.contrib.auth.models import User
+        from chat.models import ActividadChat
+        usuario = User.objects.create_user(
+            username="recien.llegado@azerta.cl", email="recien.llegado@azerta.cl")
+        c = Client()
+        c.force_login(usuario)
+        resp = c.post("/api/chat/", data=json.dumps({"message": "hola"}),
+                      content_type="application/json")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("no está disponible para tu rol", resp.json()["answer"])
+        self.assertEqual(resp.json()["meta"]["intencion"], "sin_acceso")
+        fila = ActividadChat.objects.get()
+        self.assertEqual(fila.intencion, "sin_acceso")
+        self.assertEqual(fila.email, "recien.llegado@azerta.cl")
 
     def test_la_ip_queda_registrada(self):
         from chat.models import ActividadChat

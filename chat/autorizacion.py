@@ -65,8 +65,8 @@ MATRIZ_EJECUTIVO = {
     "beneficios_de_persona": PROPIO,
 }
 
-MSG_SIN_ACCESO = ("Tu cuenta no tiene acceso al asistente. Escríbele al equipo "
-                  "de Personas si crees que es un error.")
+MSG_SIN_ACCESO = ("Iris no está disponible para tu rol por el momento. Pídele "
+                  "al equipo de Personas que te habilite el acceso desde el portal.")
 MSG_FUERA_ALCANCE = ("No tienes acceso a la información de esa persona: tu perfil "
                      "solo cubre a quienes están en tu misma línea.")
 

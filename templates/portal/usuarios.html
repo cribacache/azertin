@@ -3,7 +3,8 @@
 {% block titulo %}Usuarios{% endblock %}
 {% block encabezado %}Usuarios y roles{% endblock %}
 {% block subtitulo %}Quién puede preguntar qué. Un usuario sin rol asignado
-entra como <strong>{{ rol_defecto }}</strong> (acceso acotado).{% endblock %}
+entra como <strong>{{ rol_defecto }}</strong>: no puede usar el chat hasta
+que le des un rol.{% endblock %}
 {% block nav_usuarios %}activo{% endblock %}
 
 {% block contenido %}
@@ -20,8 +21,9 @@ entra como <strong>{{ rol_defecto }}</strong> (acceso acotado).{% endblock %}
 
   <section class="invitar">
     <h2>Darle rol a alguien antes de que entre</h2>
-    <p class="tenue">Para no esperar a que alguien inicie sesión por primera vez
-      (entra como {{ rol_defecto }}) para recién ahí subirle el rol.</p>
+    <p class="tenue">Para que pueda usar el chat desde su primer login, en vez
+      de entrar bloqueado ({{ rol_defecto }}) hasta que alguien se acuerde de
+      habilitarla.</p>
     <form method="post" class="invitar-form">
       {% csrf_token %}
       <input type="hidden" name="accion" value="invitar">
