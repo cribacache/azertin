@@ -196,8 +196,10 @@ class HerramientasTests(TestCase):
     def test_listar_ausencias_muestra_el_subtipo_de_vacacion(self, mocked):
         """Antes "tipo" mostraba la etiqueta generica de la categoria
         ("vacaciones") para cualquier subtipo; ahora distingue dia
-        administrativo/feriado legal/etc -el detalle que buk ya calculaba
-        pero herramientas.py descartaba."""
+        administrativo/vacacion progresiva/etc -el detalle que buk ya
+        calculaba pero herramientas.py descartaba. "legales" (el feriado
+        anual) sigue mostrandose como "vacaciones": ver TIPOS_VACACION en
+        buk.py."""
         from chat import herramientas
         datos = herramientas.listar_ausencias(_f(0), _f(0))
         tipos_de_luis = {p["tipo"] for p in datos["personas"] if p["nombre"] == "Luis Soto"}

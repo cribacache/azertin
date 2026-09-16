@@ -26,15 +26,19 @@ CATEGORIAS = {
     "inasistencia": {"fuente": "absences", "tipos": ("absence",), "etiqueta": "inasistencia"},
 }
 
+# "legales" (vacaciones legales, el feriado anual que cada quien va pidiendo)
+# se muestra como "vacaciones" a secas, no "feriado legal": ese nombre suena
+# a feriado de calendario (nadie trabaja ese dia), y es justo lo contrario -
+# es la persona pidiendo SUS dias, el resto de la oficina sigue trabajando.
 TIPOS_VACACION = {
-    "legales": "feriado legal",
+    "legales": "vacaciones",
     "dias_administrativos": "día administrativo",
     "progresivas": "vacación progresiva",
     "dias_adicionales": "día adicional",
 }
 
 TIPOS_VACACION_PLURAL = {
-    "legales": "feriados legales",
+    "legales": "vacaciones",
     "dias_administrativos": "días administrativos",
     "progresivas": "vacaciones progresivas",
     "dias_adicionales": "días adicionales",
