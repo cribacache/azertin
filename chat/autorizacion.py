@@ -47,6 +47,12 @@ MATRIZ_EJECUTIVO = {
     # Cualquiera puede reservar una sala hoy mismo a mano en Calendar.
     "salas_disponibles": LIBRE,
     "crear_reunion": LIBRE,
+    # Agenda de una sala o de una persona: LIBRE aca porque la barrera no es el
+    # rol sino la lista de correos de settings.SALAS_REUNIONES_USUARIOS, que
+    # cada herramienta revisa por su cuenta (herramientas.salas_habilitadas_para)
+    # y que vale tambien para gerencia.
+    "quien_esta_en_sala": LIBRE,
+    "reuniones_de_persona": LIBRE,
     # Datos de personas: acotados a la jerarquía.
     "listar_ausencias": PARES,
     "quien_esta_trabajando": PARES,

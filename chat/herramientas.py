@@ -5,9 +5,12 @@ estas funciones, que reutilizan la misma capa sanitizada que usa el router de
 reglas. Lo que no pase por aca, el modelo no lo puede ver ni inventar.
 """
 
+import logging
 from datetime import date, timedelta
 
 from . import buk, cuentas, documentos, intents, personas, turnos
+
+logger = logging.getLogger(__name__)
 
 MAX_PERSONAS = 60  # techo para no mandar listados enormes al modelo
 
@@ -518,6 +521,17 @@ def _correo_de(contexto):
     return (getattr(usuario, "email", "") or "").strip()
 
 
+NO_HABILITADA = "Esta función no está disponible para tu cuenta."
+
+
+def salas_habilitadas_para(contexto):
+    """Si quien pregunta puede usar salas y agenda de reuniones (lista de
+    correos en settings, ver chat/salas.py::usuario_habilitado)."""
+    from . import salas
+
+    return salas.usuario_habilitado(_correo_de(contexto))
+
+
 def salas_disponibles(fecha, hora_inicio, hora_fin, _contexto=None):
     """Que salas de reuniones estan libres u ocupadas en un rango horario.
 
@@ -527,6 +541,8 @@ def salas_disponibles(fecha, hora_inicio, hora_fin, _contexto=None):
     """
     from . import salas
 
+    if not salas_habilitadas_para(_contexto):
+        return {"error": NO_HABILITADA}
     correo = _correo_de(_contexto)
     if not correo:
         return {"error": "No pude identificar tu cuenta para consultar Calendar."}
@@ -541,6 +557,8 @@ def crear_reunion(sala, fecha, hora_inicio, hora_fin, titulo, invitados=None, _c
     quien pregunta (ver salas_disponibles sobre `_contexto`)."""
     from . import salas as salas_mod
 
+    if not salas_habilitadas_para(_contexto):
+        return {"creada": False, "motivo": NO_HABILITADA}
     correo = _correo_de(_contexto)
     if not correo:
         return {"creada": False, "motivo": "No pude identificar tu cuenta para crear la reunión."}
@@ -551,20 +569,85 @@ def crear_reunion(sala, fecha, hora_inicio, hora_fin, titulo, invitados=None, _c
         return {"creada": False, "motivo": str(error)}
 
 
-# Las dos herramientas de reserva de salas, para poder apagarlas juntas
-# (settings.SALAS_REUNIONES_HABILITADO, ver chat/asistente.py::salas_habilitadas)
-# sin tocar el resto.
-HERRAMIENTAS_SALAS = {"salas_disponibles", "crear_reunion"}
+def quien_esta_en_sala(sala=None, fecha=None, hora_inicio=None, hora_fin=None, _contexto=None):
+    """Que reuniones tiene una sala (o todas) y de quien: "quien esta en la
+    sala 2". Sin fecha ni hora es AHORA; con fecha y sin hora, todo ese dia."""
+    from . import salas as salas_mod
+
+    if not salas_habilitadas_para(_contexto):
+        return {"error": NO_HABILITADA}
+    correo = _correo_de(_contexto)
+    if not correo:
+        return {"error": "No pude identificar tu cuenta para consultar Calendar."}
+    try:
+        inicio, fin = salas_mod.ventana(fecha, None, hora_inicio, hora_fin,
+                                        ahora_si_no_hay_hora=True)
+        return salas_mod.agenda_de_sala(correo, sala, inicio, fin)
+    except salas_mod.SalasError as error:
+        return {"error": str(error)}
+
+
+def reuniones_de_persona(nombre=None, fecha=None, fecha_hasta=None, hora_inicio=None,
+                         hora_fin=None, texto=None, _contexto=None):
+    """Agenda de una persona: cualquier reunion, tenga o no sala (online, en
+    otro lugar). Sin `nombre` es la de quien pregunta ("mis reuniones").
+
+    Lee el calendario de esa persona actuando como ella (delegacion de
+    dominio), asi que cada consulta queda en el log con quien pregunto y por
+    quien. Los eventos privados no muestran detalle (chat/salas.py).
+    """
+    from . import salas as salas_mod
+
+    if not salas_habilitadas_para(_contexto):
+        return {"error": NO_HABILITADA}
+    solicitante = _correo_de(_contexto)
+    if not solicitante:
+        return {"error": "No pude identificar tu cuenta para consultar Calendar."}
+
+    if (nombre or "").strip():
+        directorio, _ = buk.directorio()
+        ids, _ = personas.buscar(nombre, directorio)
+        if not ids:
+            return {"encontrada": False,
+                    "motivo": "No hay nadie con ese nombre en la nomina activa."}
+        if len(ids) > 1:
+            return {"encontrada": False, "motivo": "El nombre coincide con varias personas.",
+                    "candidatos": sorted(directorio[i]["nombre"] for i in ids)[:8]}
+        persona = directorio[next(iter(ids))]
+        objetivo, nombre_real = (persona.get("email") or "").strip(), persona["nombre"]
+        if not objetivo:
+            return {"encontrada": True, "nombre": nombre_real,
+                    "error": "No tengo el correo de esa persona para leer su calendario."}
+    else:
+        objetivo, nombre_real = solicitante, None
+
+    try:
+        inicio, fin = salas_mod.ventana(fecha, fecha_hasta, hora_inicio, hora_fin)
+        logger.info("agenda: %s consulto las reuniones de %s (%s a %s)",
+                    solicitante, objetivo, inicio.isoformat(), fin.isoformat())
+        agenda = salas_mod.reuniones_de(objetivo, inicio, fin, texto)
+    except salas_mod.SalasError as error:
+        return {"error": str(error)}
+    if nombre_real:
+        return {"encontrada": True, "nombre": nombre_real, **agenda}
+    return {"encontrada": True, "de_quien_pregunta": True, **agenda}
+
+
+# Las herramientas de salas y agenda de reuniones, para poder apagarlas juntas
+# (settings.SALAS_REUNIONES_HABILITADO) y abrirlas solo a ciertos correos
+# (SALAS_REUNIONES_USUARIOS, ver chat/asistente.py::salas_habilitadas).
+HERRAMIENTAS_SALAS = {"salas_disponibles", "crear_reunion", "quien_esta_en_sala",
+                      "reuniones_de_persona"}
 
 # Herramientas que necesitan saber quien pregunta (su correo real), no solo
 # los argumentos que arma el modelo: chat/asistente.py les inyecta
 # `_contexto` antes de llamarlas, fuera del esquema que ve Gemini.
 NECESITAN_CONTEXTO = HERRAMIENTAS_SALAS
 
-# Estas dos hablan con Calendar en tiempo real (disponibilidad que cambia
-# minuto a minuto) o tienen efecto de lado (crean un evento real): cachear su
-# respuesta como cualquier otra pregunta serviria una disponibilidad vieja o
-# escondería que ya se puede volver a intentar. Ver chat/respuestas.py.
+# Hablan con Calendar en tiempo real (disponibilidad y agenda que cambian
+# minuto a minuto), o tienen efecto de lado (crean un evento real), o leen la
+# agenda de una persona: cachear su respuesta serviria datos viejos -y, peor,
+# la agenda de alguien a quien no deberia verla-. Ver chat/respuestas.py.
 NO_CACHEABLES = HERRAMIENTAS_SALAS
 
 
@@ -607,6 +690,8 @@ FUNCIONES = {
     "buscar_politica": buscar_politica,
     "salas_disponibles": salas_disponibles,
     "crear_reunion": crear_reunion,
+    "quien_esta_en_sala": quien_esta_en_sala,
+    "reuniones_de_persona": reuniones_de_persona,
 }
 
 _FECHA = {"type": "string", "description": "Fecha en formato AAAA-MM-DD."}
@@ -1010,6 +1095,68 @@ ESQUEMAS = [
                     },
                 },
                 "required": ["sala", "fecha", "hora_inicio", "hora_fin", "titulo"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "quien_esta_en_sala",
+            "description": (
+                "Que reuniones tiene una sala de reuniones y quien la tiene "
+                "tomada (organizador y asistentes). Usar para 'quien esta en "
+                "la sala 2', 'que reunion hay en la sala 1 a las 15:00', "
+                "'que salas estan ocupadas ahora y por quien'. Sin fecha ni "
+                "hora consulta AHORA; con fecha y sin hora, todo ese dia. "
+                "Sin nombre de sala revisa todas. Si una reunion viene con "
+                "'privada': true no tiene detalle: di solo que esta ocupada."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sala": {"type": "string",
+                             "description": "Nombre de la sala (ej. 'Sala 2'). Omitir para todas."},
+                    "fecha": {"type": "string",
+                              "description": "AAAA-MM-DD. Omitir para hoy."},
+                    "hora_inicio": {"type": "string",
+                                    "description": "HH:MM, 24 horas. Omitir para 'ahora' (hoy) o todo el dia."},
+                    "hora_fin": {"type": "string",
+                                 "description": "HH:MM, 24 horas. Omitir para consultar solo ese minuto."},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "reuniones_de_persona",
+            "description": (
+                "Las reuniones (eventos de Calendar) de UNA persona, tengan o "
+                "no una sala tomada: tambien las online o sin lugar. Usar para "
+                "'tiene reunion X el jueves a las 10', 'que reuniones tiene X "
+                "manana', 'de que trata la reunion de X', 'con quien se junta "
+                "X', 'mis reuniones de hoy' (sin nombre = quien te escribe). "
+                "Trae titulo, horario, organizador, asistentes, sala si tiene "
+                "y si es en linea. Si una reunion viene con 'privada': true "
+                "no tiene detalle: di solo que tiene un compromiso a esa hora, "
+                "sin inventar de que es. Si no hay reuniones a esa hora, "
+                "dilo tal cual. 'texto' filtra por titulo o descripcion."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "nombre": {"type": "string",
+                               "description": "Nombre de la persona. Omitir para las reuniones de quien pregunta."},
+                    "fecha": {"type": "string", "description": "AAAA-MM-DD. Omitir para hoy."},
+                    "fecha_hasta": {"type": "string",
+                                    "description": "AAAA-MM-DD, para un rango de dias (maximo 31). Omitir para un solo dia."},
+                    "hora_inicio": {"type": "string",
+                                    "description": "HH:MM, 24 horas. Solo con un dia. Omitir para todo el dia."},
+                    "hora_fin": {"type": "string",
+                                 "description": "HH:MM, 24 horas. Omitir para consultar solo ese minuto."},
+                    "texto": {"type": "string",
+                              "description": "Palabra a buscar en el titulo o la descripcion de la reunion."},
+                },
             },
         },
     },

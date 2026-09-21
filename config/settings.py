@@ -131,6 +131,14 @@ GOOGLE_WORKSPACE_ADMIN = os.getenv("GOOGLE_WORKSPACE_ADMIN", "").strip()
 # menciona en las instrucciones (chat/asistente.py::salas_habilitadas).
 SALAS_REUNIONES_HABILITADO = os.getenv("SALAS_REUNIONES_HABILITADO", "True").lower() == "true"
 
+# Quien puede usar salas y agenda de reuniones (chat/salas.py::usuario_habilitado):
+# SOLO los correos de esta lista, separados por coma, y ademas el apagador de
+# arriba en True. Vacia = nadie, tampoco gerencia ni superusuarios: la agenda
+# de otras personas es sensible y se abre persona por persona, a proposito.
+SALAS_REUNIONES_USUARIOS = {
+    c.strip().lower() for c in os.getenv("SALAS_REUNIONES_USUARIOS", "").split(",") if c.strip()
+}
+
 DRIVE_CACHE_DIR = Path(os.getenv("DRIVE_CACHE_DIR", BASE_DIR / ".drive_cache"))
 # Cada cuanto se vuelve a mirar Drive (solo baja lo que cambio).
 DRIVE_SYNC_TTL = int(os.getenv("DRIVE_SYNC_TTL", "300"))

@@ -506,11 +506,17 @@ class GeminiTests(TestCase):
         self.assertTrue(asistente.disponible())
         self.assertEqual(asistente.modelo(), settings.GEMINI_MODEL)
 
+    @override_settings(SALAS_REUNIONES_USUARIOS={"paula@azerta.cl"})
     def test_los_esquemas_se_traducen_al_formato_de_google(self):
         from chat import asistente, herramientas
-        tools = asistente._declaraciones_gemini()
-        declaradas = {f.name for f in tools[0].function_declarations}
-        self.assertEqual(declaradas, set(herramientas.FUNCIONES))
+        # quien esta en la lista de salas ve todas las herramientas...
+        tools = asistente._declaraciones_gemini(_contexto_de("paula@azerta.cl"))
+        self.assertEqual({f.name for f in tools[0].function_declarations},
+                         set(herramientas.FUNCIONES))
+        # ...el resto, todas menos salas y agenda de reuniones.
+        tools = asistente._declaraciones_gemini(_contexto_de("ana@azerta.cl"))
+        self.assertEqual({f.name for f in tools[0].function_declarations},
+                         set(herramientas.FUNCIONES) - herramientas.HERRAMIENTAS_SALAS)
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     @patch("chat.asistente._cliente_gemini")
@@ -743,6 +749,7 @@ class SalasTests(TestCase):
         self.assertEqual(resultado, {"creada": False, "motivo": "sala_desconocida"})
 
 
+@override_settings(SALAS_REUNIONES_USUARIOS={"ana@azerta.cl"})
 class SalasHerramientasTests(TestCase):
     """chat/herramientas.py::salas_disponibles/crear_reunion: actuan "como"
     quien pregunta (su correo real, via _contexto), nunca como alguien que el
@@ -797,7 +804,8 @@ class SalasHerramientasTests(TestCase):
 
 
 @SIN_DOCUMENTOS
-@override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_ANONIMIZAR=False)
+@override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_ANONIMIZAR=False,
+                   SALAS_REUNIONES_USUARIOS={"pruebas@azerta.cl"})
 class SalasIntegracionTests(TestCase):
     """De punta a punta via /api/chat/: el resultado de salas_disponibles
     llega a la interfaz aparte del texto, y nunca se sirve del cache."""
@@ -846,46 +854,543 @@ class SalasIntegracionTests(TestCase):
         self.assertEqual(mock_disp.call_count, 2)  # se volvio a consultar Calendar
 
 
-class SalasApagadorTests(TestCase):
-    """settings.SALAS_REUNIONES_HABILITADO: apagador temporal, sin borrar el
-    codigo (chat/asistente.py::salas_habilitadas)."""
+def _contexto_de(correo, rol="ejecutivo"):
+    from django.contrib.auth.models import User
+    from chat.perfil import Contexto
+    usuario, _ = User.objects.get_or_create(username=correo, defaults={"email": correo})
+    return Contexto(rol=rol, usuario=usuario)
 
-    def test_habilitadas_por_defecto(self):
+
+NOMBRES_SALAS_Y_AGENDA = {"salas_disponibles", "crear_reunion", "quien_esta_en_sala",
+                          "reuniones_de_persona"}
+
+
+@override_settings(SALAS_REUNIONES_USUARIOS={"paula@azerta.cl"})
+class SalasApagadorTests(TestCase):
+    """Quien puede usar salas y agenda de reuniones: el apagador general
+    (SALAS_REUNIONES_HABILITADO) Y la lista de correos
+    (SALAS_REUNIONES_USUARIOS). Sin excepcion por rol
+    (chat/salas.py::usuario_habilitado)."""
+
+    def _declaradas(self, contexto):
         from chat import asistente
-        self.assertTrue(asistente.salas_habilitadas())
+        return {f.name for tool in asistente._declaraciones_gemini(contexto)
+                for f in tool.function_declarations}
+
+    def test_alguien_de_la_lista_esta_habilitado(self):
+        from chat import asistente
+        self.assertTrue(asistente.salas_habilitadas(_contexto_de("paula@azerta.cl")))
+
+    def test_mayusculas_en_el_correo_no_importan(self):
+        from chat import asistente
+        self.assertTrue(asistente.salas_habilitadas(_contexto_de("Paula@Azerta.CL")))
+
+    def test_cualquier_otra_persona_no(self):
+        from chat import asistente
+        self.assertFalse(asistente.salas_habilitadas(_contexto_de("ana@azerta.cl")))
+
+    def test_sin_contexto_no(self):
+        from chat import asistente
+        self.assertFalse(asistente.salas_habilitadas(None))
+
+    @override_settings(SALAS_REUNIONES_USUARIOS=set())
+    def test_lista_vacia_no_habilita_a_nadie(self):
+        from chat import asistente
+        self.assertFalse(asistente.salas_habilitadas(_contexto_de("paula@azerta.cl")))
+
+    def test_gerencia_y_superusuario_tampoco_entran_si_no_estan_en_la_lista(self):
+        from django.contrib.auth.models import User
+        from chat import asistente
+        from chat.perfil import Contexto
+        jefe = User.objects.create_user(
+            username="jefe@azerta.cl", email="jefe@azerta.cl", is_superuser=True)
+        self.assertFalse(asistente.salas_habilitadas(Contexto(rol="gerencia", usuario=jefe)))
 
     @override_settings(SALAS_REUNIONES_HABILITADO=False)
-    def test_se_puede_apagar(self):
+    def test_el_apagador_general_gana_incluso_para_la_lista(self):
         from chat import asistente
-        self.assertFalse(asistente.salas_habilitadas())
+        self.assertFalse(asistente.salas_habilitadas(_contexto_de("paula@azerta.cl")))
+
+    def test_las_herramientas_se_declaran_solo_a_quien_esta_en_la_lista(self):
+        self.assertTrue(NOMBRES_SALAS_Y_AGENDA <= self._declaradas(_contexto_de("paula@azerta.cl")))
+        self.assertFalse(NOMBRES_SALAS_Y_AGENDA & self._declaradas(_contexto_de("ana@azerta.cl")))
+        self.assertFalse(NOMBRES_SALAS_Y_AGENDA & self._declaradas(None))
+
+    def test_cada_herramienta_se_niega_sola_a_quien_no_esta_en_la_lista(self):
+        """Aunque el modelo la pidiera igual (no deberia: ni la conoce), la
+        propia herramienta revisa el correo antes de tocar Calendar."""
+        from chat import herramientas
+        ctx = _contexto_de("ana@azerta.cl")
+        with patch("chat.salas.disponibilidad") as disp, patch("chat.salas.crear_reunion") as crear, \
+                patch("chat.salas.agenda_de_sala") as sala, patch("chat.salas.reuniones_de") as agenda:
+            salidas = [
+                herramientas.salas_disponibles("2026-01-01", "10:00", "11:00", _contexto=ctx),
+                herramientas.crear_reunion("Sala 1", "2026-01-01", "10:00", "11:00", "x", _contexto=ctx),
+                herramientas.quien_esta_en_sala("Sala 1", _contexto=ctx),
+                herramientas.reuniones_de_persona("Luis", _contexto=ctx),
+            ]
+        for salida in salidas:
+            self.assertIn(herramientas.NO_HABILITADA, json.dumps(salida, ensure_ascii=False))
+        for mock in (disp, crear, sala, agenda):
+            mock.assert_not_called()
+
+    @override_settings(AUTORIZACION_ACTIVA=True)
+    def test_ni_siquiera_gerencia_llega_a_la_agenda_de_otro(self):
+        """Por la ruta real (asistente -> autorizacion -> herramienta): el rol
+        gerencia se salta los filtros de datos, pero no esta llave."""
+        from django.contrib.auth.models import User
+        from chat import asistente
+        from chat.perfil import Contexto
+        jefe = User.objects.create_user(username="jefe@azerta.cl", email="jefe@azerta.cl")
+        with patch("chat.salas.reuniones_de") as agenda:
+            salida = asistente._llamar_herramienta(
+                "reuniones_de_persona", {"nombre": "Luis"},
+                Contexto(rol="gerencia", usuario=jefe))
+        self.assertIn("error", salida)
+        agenda.assert_not_called()
 
     @override_settings(SALAS_REUNIONES_HABILITADO=False)
     def test_apagadas_no_se_declaran_a_gemini(self):
-        from chat import asistente
-        nombres = {f.name for tool in asistente._declaraciones_gemini()
-                  for f in tool.function_declarations}
-        self.assertNotIn("salas_disponibles", nombres)
-        self.assertNotIn("crear_reunion", nombres)
+        self.assertFalse(NOMBRES_SALAS_Y_AGENDA & self._declaradas(_contexto_de("paula@azerta.cl")))
 
-    def test_habilitadas_si_se_declaran_a_gemini(self):
-        from chat import asistente
-        nombres = {f.name for tool in asistente._declaraciones_gemini()
-                  for f in tool.function_declarations}
-        self.assertIn("salas_disponibles", nombres)
-        self.assertIn("crear_reunion", nombres)
-
-    @override_settings(GEMINI_API_KEY="AIza-prueba", SALAS_REUNIONES_HABILITADO=False)
+    @override_settings(GEMINI_API_KEY="AIza-prueba")
     @patch("chat.buk.requests.get", side_effect=fake_get)
     @patch("chat.asistente._cliente_gemini")
-    def test_apagadas_no_aparecen_en_las_instrucciones(self, mock_cliente, mock_buk):
+    def test_quien_no_esta_en_la_lista_no_ve_nada_de_esto_en_las_instrucciones(
+            self, mock_cliente, mock_buk):
+        mock_cliente.return_value.models.generate_content.return_value = _respuesta_gemini(
+            texto="Todo bien.")
+        self.client.post("/api/chat/", data=json.dumps({"message": "hola"}),
+                         content_type="application/json")  # pruebas@azerta.cl: fuera de la lista
+        config = mock_cliente.return_value.models.generate_content.call_args.kwargs["config"]
+        for palabra in ("sala de reuniones", "salas_disponibles", "crear_reunion",
+                        "quien_esta_en_sala", "reuniones_de_persona"):
+            self.assertNotIn(palabra, config.system_instruction)
+        declaradas = {f.name for t in config.tools for f in t.function_declarations}
+        self.assertFalse(NOMBRES_SALAS_Y_AGENDA & declaradas)
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba", SALAS_REUNIONES_USUARIOS={"pruebas@azerta.cl"})
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_quien_esta_en_la_lista_recibe_las_instrucciones_y_las_herramientas(
+            self, mock_cliente, mock_buk):
         mock_cliente.return_value.models.generate_content.return_value = _respuesta_gemini(
             texto="Todo bien.")
         self.client.post("/api/chat/", data=json.dumps({"message": "hola"}),
                          content_type="application/json")
-        instrucciones = mock_cliente.return_value.models.generate_content.call_args \
-            .kwargs["config"].system_instruction
-        for palabra in ("sala de reuniones", "salas_disponibles", "crear_reunion"):
-            self.assertNotIn(palabra, instrucciones)
+        config = mock_cliente.return_value.models.generate_content.call_args.kwargs["config"]
+        self.assertIn("quien_esta_en_sala", config.system_instruction)
+        self.assertIn("reuniones_de_persona", config.system_instruction)
+        declaradas = {f.name for t in config.tools for f in t.function_declarations}
+        self.assertTrue(NOMBRES_SALAS_Y_AGENDA <= declaradas)
+
+
+def _servicio_calendario(eventos_por_calendario):
+    servicio = Mock()
+
+    def _list(calendarId=None, **kwargs):
+        pedido = Mock()
+        pedido.execute.return_value = {"items": eventos_por_calendario.get(calendarId, [])}
+        return pedido
+
+    servicio.events.return_value.list.side_effect = _list
+    return servicio
+
+
+SALAS_FALSAS = [
+    {"email": "sala1@r", "nombre": "Sala 1", "capacidad": 6},
+    {"email": "sala10@r", "nombre": "Sala 10", "capacidad": 12},
+    {"email": "sala2@r", "nombre": "Sala 2", "capacidad": 4},
+]
+
+
+class VentanaAgendaTests(TestCase):
+    """chat/salas.py::ventana: de lo que dijo la persona al rango que se le
+    pide a Calendar."""
+
+    def test_sin_nada_es_el_dia_de_hoy_completo(self):
+        from datetime import datetime as dt
+        from chat import salas
+        inicio, fin = salas.ventana()
+        self.assertEqual(inicio.date(), dt.now(salas.ZONA).date())
+        self.assertEqual((inicio.hour, inicio.minute), (0, 0))
+        self.assertEqual(fin - inicio, timedelta(days=1))
+
+    def test_ahora_solo_si_se_pide_y_no_hay_hora(self):
+        from chat import salas
+        inicio, fin = salas.ventana(ahora_si_no_hay_hora=True)
+        self.assertEqual(fin - inicio, timedelta(minutes=1))
+        # con otra fecha ya no es "ahora": es el dia completo
+        inicio, fin = salas.ventana("2026-06-10", ahora_si_no_hay_hora=True)
+        self.assertEqual(fin - inicio, timedelta(days=1))
+
+    def test_una_hora_sin_fin_es_ese_minuto(self):
+        from chat import salas
+        inicio, fin = salas.ventana("2026-06-10", None, "15:00")
+        self.assertEqual((inicio.hour, inicio.minute), (15, 0))
+        self.assertEqual(fin - inicio, timedelta(minutes=1))
+
+    def test_hora_de_inicio_y_de_fin(self):
+        from chat import salas
+        inicio, fin = salas.ventana("2026-06-10", None, "10:00", "11:30")
+        self.assertEqual(fin - inicio, timedelta(minutes=90))
+
+    def test_un_rango_de_dias(self):
+        from chat import salas
+        inicio, fin = salas.ventana("2026-06-10", "2026-06-12")
+        self.assertEqual(fin - inicio, timedelta(days=3))
+
+    def test_errores(self):
+        from chat import salas
+        casos = [
+            dict(fecha="no-es-fecha"),
+            dict(fecha="2026-06-10", hora_inicio="25:99"),
+            dict(fecha="2026-06-10", hora_fin="11:00"),                       # fin sin inicio
+            dict(fecha="2026-06-10", hora_inicio="11:00", hora_fin="10:00"),   # fin antes
+            dict(fecha="2026-06-10", fecha_hasta="2026-06-12", hora_inicio="10:00"),  # hora en varios dias
+            dict(fecha="2026-06-10", fecha_hasta="2026-06-01"),               # hasta antes de desde
+            dict(fecha="2026-01-01", fecha_hasta="2026-03-01"),               # demasiado largo
+        ]
+        for caso in casos:
+            with self.assertRaises(salas.SalasError, msg=str(caso)):
+                salas.ventana(**caso)
+
+
+@patch("chat.salas._nombres_por_correo", return_value={"ana@azerta.cl": "Ana Rojas"})
+@patch("chat.salas._credenciales", return_value=Mock())
+class AgendaSalasTests(TestCase):
+    """chat/salas.py: quien esta en una sala y las reuniones de una persona.
+    El SDK de Google se simula, igual que en SalasTests."""
+
+    def setUp(self):
+        cache.clear()
+        self.inicio, self.fin = __import__("chat.salas", fromlist=["ventana"]).ventana("2026-06-10")
+
+    def _evento(self, **extra):
+        base = {"summary": "Planificacion", "status": "confirmed",
+                "start": {"dateTime": "2026-06-10T15:00:00-04:00"},
+                "end": {"dateTime": "2026-06-10T16:00:00-04:00"},
+                "organizer": {"email": "ana@azerta.cl"}}
+        base.update(extra)
+        return base
+
+    def test_buscar_salas_por_palabras_completas(self, _cred, _nombres):
+        from chat import salas
+        nombres = lambda texto: [s["nombre"] for s in salas._buscar_salas(SALAS_FALSAS, texto)]
+        self.assertEqual(nombres("sala 1"), ["Sala 1"])          # no calza con "Sala 10"
+        self.assertEqual(nombres("SALA 2"), ["Sala 2"])
+        self.assertEqual(nombres("sala"), ["Sala 1", "Sala 10", "Sala 2"])
+        self.assertEqual(nombres("sala 7"), [])
+        self.assertEqual(nombres(""), [])
+
+    @patch("chat.salas._directorio", return_value=SALAS_FALSAS)
+    @patch("googleapiclient.discovery.build")
+    def test_quien_esta_en_la_sala(self, mock_build, _dir, _cred, _nombres):
+        from chat import salas
+        mock_build.return_value = _servicio_calendario({"sala2@r": [self._evento(
+            attendees=[
+                {"email": "sala2@r", "resource": True, "displayName": "Sala 2",
+                 "responseStatus": "accepted"},
+                {"email": "ana@azerta.cl", "responseStatus": "accepted"},
+                {"email": "externo@otra.com", "displayName": "Pedro Externo",
+                 "responseStatus": "needsAction"},
+            ], hangoutLink="https://meet.google.com/x", description="<p>Ver   plan</p>")]})
+        salida = salas.agenda_de_sala("paula@azerta.cl", "sala 2", self.inicio, self.fin)
+
+        self.assertTrue(salida["encontrada"])
+        self.assertEqual([s["sala"] for s in salida["salas"]], ["Sala 2"])
+        reunion = salida["salas"][0]["reuniones"][0]
+        self.assertEqual(reunion["titulo"], "Planificacion")
+        self.assertEqual((reunion["fecha"], reunion["desde"], reunion["hasta"]),
+                         ("2026-06-10", "15:00", "16:00"))
+        self.assertEqual(reunion["organizador"], {"nombre": "Ana Rojas", "email": "ana@azerta.cl"})
+        self.assertEqual(reunion["asistentes"], [
+            {"nombre": "Ana Rojas", "email": "ana@azerta.cl", "respuesta": "aceptó"},
+            {"nombre": "Pedro Externo", "email": "externo@otra.com", "respuesta": "sin responder"},
+        ])                                             # la sala no figura como asistente
+        self.assertEqual(reunion["salas"], ["Sala 2"])
+        self.assertTrue(reunion["en_linea"])
+        self.assertEqual(reunion["descripcion"], "Ver plan")   # sin HTML ni espacios de mas
+        # se leyo la agenda de la sala actuando como quien pregunta
+        _cred.assert_called_once_with("paula@azerta.cl")
+
+    @patch("chat.salas._directorio", return_value=SALAS_FALSAS)
+    @patch("googleapiclient.discovery.build")
+    def test_sin_nombre_de_sala_revisa_todas(self, mock_build, _dir, _cred, _nombres):
+        from chat import salas
+        mock_build.return_value = _servicio_calendario({"sala1@r": [self._evento()]})
+        salida = salas.agenda_de_sala("paula@azerta.cl", None, self.inicio, self.fin)
+        self.assertEqual([s["sala"] for s in salida["salas"]], ["Sala 1", "Sala 10", "Sala 2"])
+        self.assertEqual([len(s["reuniones"]) for s in salida["salas"]], [1, 0, 0])
+
+    @patch("chat.salas._directorio", return_value=SALAS_FALSAS)
+    def test_sala_inexistente_dice_cuales_hay(self, _dir, _cred, _nombres):
+        from chat import salas
+        salida = salas.agenda_de_sala("paula@azerta.cl", "sala 7", self.inicio, self.fin)
+        self.assertFalse(salida["encontrada"])
+        self.assertEqual(salida["salas_existentes"], ["Sala 1", "Sala 10", "Sala 2"])
+
+    @patch("chat.salas._directorio", return_value=SALAS_FALSAS)
+    @patch("googleapiclient.discovery.build")
+    def test_una_reserva_cancelada_o_rechazada_por_la_sala_no_la_ocupa(
+            self, mock_build, _dir, _cred, _nombres):
+        from chat import salas
+        mock_build.return_value = _servicio_calendario({"sala2@r": [
+            self._evento(status="cancelled"),
+            self._evento(attendees=[{"email": "sala2@r", "resource": True,
+                                     "responseStatus": "declined"}]),
+        ]})
+        salida = salas.agenda_de_sala("paula@azerta.cl", "Sala 2", self.inicio, self.fin)
+        self.assertEqual(salida["salas"][0]["reuniones"], [])
+
+    @patch("chat.salas._directorio", return_value=SALAS_FALSAS)
+    @patch("googleapiclient.discovery.build")
+    def test_reuniones_de_una_persona_incluye_las_online_y_sin_sala(
+            self, mock_build, _dir, _cred, _nombres):
+        from chat import salas
+        mock_build.return_value = _servicio_calendario({"primary": [
+            self._evento(summary="Daily online", hangoutLink="https://meet.google.com/abc"),
+            self._evento(summary="Almuerzo con cliente", location="Restaurante Centro",
+                         start={"dateTime": "2026-06-10T13:00:00-04:00"},
+                         end={"dateTime": "2026-06-10T14:00:00-04:00"}),
+            self._evento(summary="Feriado interno", start={"date": "2026-06-10"},
+                         end={"date": "2026-06-11"}),
+        ]})
+        salida = salas.reuniones_de("luis@azerta.cl", self.inicio, self.fin)
+
+        self.assertEqual(salida["total"], 3)
+        online, almuerzo, todo_el_dia = salida["reuniones"]
+        self.assertTrue(online["en_linea"])
+        self.assertNotIn("salas", online)                      # no tiene sala
+        self.assertEqual(almuerzo["lugar"], "Restaurante Centro")
+        self.assertFalse(almuerzo["en_linea"])
+        self.assertTrue(todo_el_dia["todo_el_dia"])
+        self.assertNotIn("desde", todo_el_dia)
+        # actuo como la persona consultada, no como quien pregunta
+        _cred.assert_called_once_with("luis@azerta.cl")
+
+    @patch("chat.salas._directorio", return_value=SALAS_FALSAS)
+    @patch("googleapiclient.discovery.build")
+    def test_un_evento_privado_no_muestra_nada_del_detalle(
+            self, mock_build, _dir, _cred, _nombres):
+        from chat import salas
+        mock_build.return_value = _servicio_calendario({"primary": [
+            self._evento(summary="Cita medica", visibility="private", description="secreto",
+                         attendees=[{"email": "doctor@clinica.cl"}]),
+            self._evento(summary="Entrevista en otra empresa", visibility="confidential"),
+        ]})
+        salida = salas.reuniones_de("luis@azerta.cl", self.inicio, self.fin)
+        crudo = json.dumps(salida, ensure_ascii=False)
+        for secreto in ("Cita medica", "secreto", "doctor@clinica.cl", "Entrevista"):
+            self.assertNotIn(secreto, crudo)
+        self.assertTrue(all(r["privada"] for r in salida["reuniones"]))
+        self.assertEqual(salida["reuniones"][0]["desde"], "15:00")   # solo cuando es
+
+        # y buscar por texto no las delata
+        filtrada = salas.reuniones_de("luis@azerta.cl", self.inicio, self.fin, texto="medica")
+        self.assertEqual(filtrada["total"], 0)
+
+    @patch("chat.salas._directorio", return_value=SALAS_FALSAS)
+    @patch("googleapiclient.discovery.build")
+    def test_no_cuentan_ni_los_cancelados_ni_donde_trabaja_ni_los_que_rechazo(
+            self, mock_build, _dir, _cred, _nombres):
+        from chat import salas
+        mock_build.return_value = _servicio_calendario({"primary": [
+            self._evento(summary="Cancelada", status="cancelled"),
+            self._evento(summary="Oficina", eventType="workingLocation"),
+            self._evento(summary="Rechazada", attendees=[
+                {"email": "luis@azerta.cl", "responseStatus": "declined"}]),
+            self._evento(summary="Vale", attendees=[
+                {"email": "luis@azerta.cl", "responseStatus": "accepted"}]),
+        ]})
+        salida = salas.reuniones_de("luis@azerta.cl", self.inicio, self.fin)
+        self.assertEqual([r["titulo"] for r in salida["reuniones"]], ["Vale"])
+
+    @patch("chat.salas._directorio", return_value=SALAS_FALSAS)
+    @patch("googleapiclient.discovery.build")
+    def test_filtra_por_texto_del_titulo_o_la_descripcion(self, mock_build, _dir, _cred, _nombres):
+        from chat import salas
+        mock_build.return_value = _servicio_calendario({"primary": [
+            self._evento(summary="Comité Cencosud"),
+            self._evento(summary="Otra", description="revisar cencosud q3"),
+            self._evento(summary="Sin relacion"),
+        ]})
+        salida = salas.reuniones_de("luis@azerta.cl", self.inicio, self.fin, texto="CENCOSUD")
+        self.assertEqual([r["titulo"] for r in salida["reuniones"]], ["Comité Cencosud", "Otra"])
+
+    @patch("chat.salas._directorio", return_value=SALAS_FALSAS)
+    @patch("googleapiclient.discovery.build")
+    def test_recorta_las_listas_largas(self, mock_build, _dir, _cred, _nombres):
+        from chat import salas
+        muchos = [self._evento(summary=f"R{i}") for i in range(30)]
+        muchos[0]["attendees"] = [{"email": f"p{i}@azerta.cl"} for i in range(40)]
+        mock_build.return_value = _servicio_calendario({"primary": muchos})
+        salida = salas.reuniones_de("luis@azerta.cl", self.inicio, self.fin)
+        self.assertEqual(salida["total"], 30)
+        self.assertEqual(len(salida["reuniones"]), salas.MAX_REUNIONES)
+        self.assertTrue(salida["truncado"])
+        self.assertEqual(len(salida["reuniones"][0]["asistentes"]), salas.MAX_ASISTENTES)
+        self.assertEqual(salida["reuniones"][0]["total_asistentes"], 40)
+
+    @patch("chat.salas._directorio", return_value=SALAS_FALSAS)
+    @patch("googleapiclient.discovery.build")
+    def test_sin_acceso_al_calendario_es_un_error_legible(self, mock_build, _dir, _cred, _nombres):
+        from google.auth.exceptions import RefreshError
+        from googleapiclient.errors import HttpError
+        from chat import salas
+        servicio = Mock()
+        mock_build.return_value = servicio
+        servicio.events.return_value.list.return_value.execute.side_effect = RefreshError("invalid_grant")
+        with self.assertRaises(salas.SalasError):
+            salas.reuniones_de("nadie@azerta.cl", self.inicio, self.fin)
+        respuesta = Mock(status=403, reason="forbidden")
+        servicio.events.return_value.list.return_value.execute.side_effect = HttpError(respuesta, b"")
+        with self.assertRaisesRegex(salas.SalasError, "acceso"):
+            salas.reuniones_de("luis@azerta.cl", self.inicio, self.fin)
+
+
+@override_settings(SALAS_REUNIONES_USUARIOS={"paula@azerta.cl"})
+class HerramientasAgendaTests(TestCase):
+    """chat/herramientas.py::quien_esta_en_sala / reuniones_de_persona."""
+
+    def setUp(self):
+        cache.clear()
+        self.paula = _contexto_de("paula@azerta.cl")
+
+    @patch("chat.salas.reuniones_de", return_value={"total": 0, "reuniones": [], "truncado": False})
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_resuelve_el_nombre_y_lee_el_calendario_de_esa_persona(self, _buk, mock_agenda):
+        from chat import herramientas
+        with self.assertLogs("chat.herramientas", level="INFO") as registro:
+            salida = herramientas.reuniones_de_persona(
+                "Luis", "2026-06-10", hora_inicio="15:00", _contexto=self.paula)
+        self.assertEqual(mock_agenda.call_args.args[0], "luis@azerta.cl")
+        self.assertTrue(salida["encontrada"])
+        self.assertEqual(salida["nombre"], "Luis Soto")
+        self.assertEqual(salida["total"], 0)
+        # queda constancia de quien miro la agenda de quien
+        self.assertIn("paula@azerta.cl", registro.output[0])
+        self.assertIn("luis@azerta.cl", registro.output[0])
+
+    @patch("chat.salas.reuniones_de", return_value={"total": 0, "reuniones": [], "truncado": False})
+    def test_sin_nombre_es_la_agenda_de_quien_pregunta(self, mock_agenda):
+        from chat import herramientas
+        salida = herramientas.reuniones_de_persona(None, "2026-06-10", _contexto=self.paula)
+        self.assertEqual(mock_agenda.call_args.args[0], "paula@azerta.cl")
+        self.assertTrue(salida["de_quien_pregunta"])
+
+    @patch("chat.salas.reuniones_de")
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_nombre_desconocido_no_toca_calendar(self, _buk, mock_agenda):
+        from chat import herramientas
+        salida = herramientas.reuniones_de_persona("nadie existe", _contexto=self.paula)
+        self.assertFalse(salida["encontrada"])
+        mock_agenda.assert_not_called()
+
+    @patch("chat.salas.reuniones_de")
+    @patch("chat.herramientas.buk.directorio")
+    def test_nombre_ambiguo_pide_elegir(self, mock_dir, mock_agenda):
+        from chat import herramientas
+        mock_dir.return_value = ({
+            1: {"id": 1, "nombre": "Ana Rojas", "email": "ana.r@azerta.cl"},
+            2: {"id": 2, "nombre": "Ana Reyes", "email": "ana.re@azerta.cl"},
+        }, 0)
+        salida = herramientas.reuniones_de_persona("Ana", _contexto=self.paula)
+        self.assertFalse(salida["encontrada"])
+        self.assertEqual(salida["candidatos"], ["Ana Reyes", "Ana Rojas"])
+        mock_agenda.assert_not_called()
+
+    @patch("chat.salas.reuniones_de")
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_una_persona_sin_correo_en_buk_no_se_puede_consultar(self, _buk, mock_agenda):
+        from chat import herramientas
+        salida = herramientas.reuniones_de_persona("Ana", _contexto=self.paula)  # Ana Rojas: sin email
+        self.assertIn("error", salida)
+        mock_agenda.assert_not_called()
+
+    def test_los_errores_de_calendar_llegan_como_mensaje(self):
+        from chat import herramientas, salas
+        with patch("chat.salas.reuniones_de", side_effect=salas.SalasError("No tengo acceso a ese calendario.")):
+            salida = herramientas.reuniones_de_persona(None, _contexto=self.paula)
+        self.assertEqual(salida, {"error": "No tengo acceso a ese calendario."})
+
+    def test_una_fecha_mal_escrita_no_llega_a_calendar(self):
+        from chat import herramientas
+        with patch("chat.salas.reuniones_de") as agenda:
+            salida = herramientas.reuniones_de_persona(None, "manana", _contexto=self.paula)
+        self.assertIn("error", salida)
+        agenda.assert_not_called()
+
+    @patch("chat.salas.agenda_de_sala", return_value={"encontrada": True, "salas": []})
+    def test_quien_esta_en_la_sala_sin_hora_es_ahora(self, mock_agenda):
+        from chat import herramientas
+        herramientas.quien_esta_en_sala("Sala 2", _contexto=self.paula)
+        correo, sala, inicio, fin = mock_agenda.call_args.args
+        self.assertEqual((correo, sala), ("paula@azerta.cl", "Sala 2"))
+        self.assertEqual(fin - inicio, timedelta(minutes=1))
+
+    @patch("chat.salas.agenda_de_sala", return_value={"encontrada": True, "salas": []})
+    def test_quien_esta_en_la_sala_a_una_hora(self, mock_agenda):
+        from chat import herramientas
+        herramientas.quien_esta_en_sala("Sala 2", "2026-06-10", "15:00", _contexto=self.paula)
+        _, _, inicio, fin = mock_agenda.call_args.args
+        self.assertEqual((inicio.hour, inicio.minute), (15, 0))
+
+    def test_agenda_no_se_cachea_ni_necesita_el_contexto_del_modelo(self):
+        from chat import herramientas
+        for nombre in ("quien_esta_en_sala", "reuniones_de_persona"):
+            self.assertIn(nombre, herramientas.NO_CACHEABLES)
+            self.assertIn(nombre, herramientas.NECESITAN_CONTEXTO)
+            esquema = next(e for e in herramientas.ESQUEMAS if e["function"]["name"] == nombre)
+            self.assertNotIn("_contexto", esquema["function"]["parameters"].get("properties", {}))
+
+    def test_anonimizar_usa_el_mismo_alias_para_una_persona_en_toda_la_respuesta(self):
+        """El nombre de un asistente sale igual que el de BUK (por correo), asi
+        que recibe el mismo alias, y su correo tambien se anonimiza."""
+        from chat import asistente
+        alias = {}
+        resultado = asistente._anonimizar({
+            "encontrada": True, "nombre": "Luis Soto",
+            "reuniones": [{"titulo": "Comite", "asistentes": [
+                {"nombre": "Luis Soto", "email": "luis@azerta.cl"}]}],
+            "salas": [{"sala": "Sala 2"}],
+        }, alias)
+        crudo = json.dumps(resultado, ensure_ascii=False)
+        self.assertNotIn("Luis", crudo)
+        self.assertNotIn("luis@azerta.cl", crudo)
+        self.assertEqual(resultado["nombre"], resultado["reuniones"][0]["asistentes"][0]["nombre"])
+        self.assertIn("Sala 2", crudo)               # una sala no es una persona
+
+
+@SIN_DOCUMENTOS
+@override_settings(GEMINI_API_KEY="AIza-prueba", ASISTENTE_ANONIMIZAR=False,
+                   SALAS_REUNIONES_USUARIOS={"pruebas@azerta.cl"})
+class AgendaIntegracionTests(TestCase):
+    """De punta a punta via /api/chat/, como una persona habilitada."""
+
+    def setUp(self):
+        cache.clear()
+
+    @patch("chat.salas.agenda_de_sala")
+    @patch("chat.asistente._cliente_gemini")
+    def test_quien_esta_en_la_sala_2_y_no_se_cachea(self, mock_cliente, mock_agenda):
+        mock_agenda.return_value = {"encontrada": True, "salas": [
+            {"sala": "Sala 2", "reuniones": [{"titulo": "Comite", "desde": "15:00", "hasta": "16:00"}]}]}
+        pedido = _PedidoGemini("quien_esta_en_sala", {"sala": "Sala 2"})
+        mock_cliente.return_value.models.generate_content.side_effect = [
+            _respuesta_gemini(llamadas=[pedido]), _respuesta_gemini(texto="En la Sala 2 hay un comite."),
+            _respuesta_gemini(llamadas=[pedido]), _respuesta_gemini(texto="En la Sala 2 hay un comite."),
+        ]
+        primera = self.client.post("/api/chat/", data=json.dumps({"message": "quien esta en la sala 2?"}),
+                                   content_type="application/json").json()
+        otra = _ClienteAutenticado()
+        segunda = otra.post("/api/chat/", data=json.dumps({"message": "quien esta en la sala 2?"}),
+                            content_type="application/json").json()
+        self.assertIn("comite", primera["answer"].lower())
+        self.assertIn("quien_esta_en_sala", primera["meta"]["herramientas"])
+        self.assertFalse(segunda["meta"]["desde_cache"])
+        self.assertEqual(mock_agenda.call_count, 2)
+        self.assertEqual(mock_agenda.call_args.args[0], "pruebas@azerta.cl")   # actua como quien pregunta
 
 
 @SIN_DOCUMENTOS
