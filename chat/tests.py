@@ -911,6 +911,16 @@ class SalasApagadorTests(TestCase):
         from chat import asistente
         self.assertFalse(asistente.salas_habilitadas(_contexto_de("paula@azerta.cl")))
 
+    def test_el_cache_de_respuestas_separa_a_quien_tiene_la_agenda(self):
+        """Sin esto, la respuesta "no tengo acceso a agendas" que recibe un
+        ejecutivo comun se serviria del cache a quien si la tiene, y al reves."""
+        from chat.perfil import ambito_cache
+        habilitada = ambito_cache(_contexto_de("paula@azerta.cl"))
+        comun = ambito_cache(_contexto_de("ana@azerta.cl"))
+        self.assertNotEqual(habilitada, comun)
+        self.assertTrue(habilitada.endswith("+agenda"))
+        self.assertEqual(ambito_cache(_contexto_de("ana@azerta.cl", rol="sin_acceso")), "sin_acceso")
+
     def test_las_herramientas_se_declaran_solo_a_quien_esta_en_la_lista(self):
         self.assertTrue(NOMBRES_SALAS_Y_AGENDA <= self._declaradas(_contexto_de("paula@azerta.cl")))
         self.assertFalse(NOMBRES_SALAS_Y_AGENDA & self._declaradas(_contexto_de("ana@azerta.cl")))

@@ -103,9 +103,19 @@ def ambito_cache(ctx):
     lo que el filtro de autorización les deja ver: gerencia con gerencia, y
     ejecutivos entre sí solo dentro de la misma familia de rol. Sin esto, un
     ejecutivo podría recibir del caché la respuesta completa de un gerente.
+
+    Quien tiene salas y agenda de reuniones habilitadas (lista de correos, ver
+    chat/salas.py) queda aparte: para quien no las tiene, "quien tiene reunion
+    manana" se responde "no tengo acceso a agendas", y esa respuesta no puede
+    servirse del caché a quien si las tiene (ni al reves) durante 10 minutos.
     """
+    from . import salas
+
     if ctx.es_gerencia:
-        return "gerencia"
-    if ctx.rol == PerfilUsuario.SIN_ACCESO:
+        base = "gerencia"
+    elif ctx.rol == PerfilUsuario.SIN_ACCESO:
         return "sin_acceso"
-    return f"ejecutivo:{ctx.familia or f'emp{ctx.employee_id or 0}'}"
+    else:
+        base = f"ejecutivo:{ctx.familia or f'emp{ctx.employee_id or 0}'}"
+    correo = getattr(getattr(ctx, "usuario", None), "email", "")
+    return f"{base}+agenda" if salas.usuario_habilitado(correo) else base
