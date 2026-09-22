@@ -132,13 +132,20 @@ GOOGLE_WORKSPACE_ADMIN = os.getenv("GOOGLE_WORKSPACE_ADMIN", "").strip()
 SALAS_REUNIONES_HABILITADO = os.getenv("SALAS_REUNIONES_HABILITADO", "True").lower() == "true"
 
 # ---------------------------------------------------------------------------
-# Azerta Finder: numero de contacto de cada persona, desde una planilla de
-# Drive (chat/finder.py::NOMBRE_EN_DRIVE, que ademas tiene que estar en
-# DRIVE_HOJAS_PERMITIDAS mas abajo para que se sincronice). Acceso restringido
-# por lista de correos, mismo criterio que salas (ver mas abajo): es
-# informacion de contacto de terceros, confidencial, y se abre persona por
-# persona.
+# Azerta Finder: numero de contacto de cada persona, desde un archivo de
+# Drive compartido DIRECTO con la cuenta de servicio (no un hijo de
+# GOOGLE_DRIVE_FOLDER_ID, asi que no pasa por DRIVE_HOJAS_PERMITIDAS ni por el
+# barrido de esa carpeta: chat/finder.py lo lee por su id via
+# drive.descargar_archivo). Acceso restringido por lista de correos, mismo
+# criterio que salas (ver mas abajo): es informacion de contacto de terceros,
+# confidencial, y se abre persona por persona.
+#
+# Acepta el id pelado o la URL completa del archivo (".../d/<ID>/edit...").
 # ---------------------------------------------------------------------------
+_finder_id_bruto = os.getenv("AZERTA_FINDER_FILE_ID", "").strip()
+_m_finder = re.search(r"/d/([A-Za-z0-9_-]+)", _finder_id_bruto)
+AZERTA_FINDER_FILE_ID = _m_finder.group(1) if _m_finder else _finder_id_bruto
+
 AZERTA_FINDER_USUARIOS = {
     c.strip().lower() for c in os.getenv("AZERTA_FINDER_USUARIOS", "").split(",") if c.strip()
 }

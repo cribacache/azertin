@@ -148,6 +148,18 @@ def _get(path, params, binario=False):
     return resp.content if binario else resp.json()
 
 
+def descargar_archivo(file_id):
+    """Bytes crudos de un archivo de Drive por su id, sin pasar por la carpeta
+    sincronizada.
+
+    Para un archivo compartido directo con la cuenta de servicio (no
+    necesariamente dentro de GOOGLE_DRIVE_FOLDER_ID): ver chat/finder.py, que
+    no puede depender del barrido de _listar_archivos porque el archivo no es
+    hijo de esa carpeta.
+    """
+    return _get(f"/files/{file_id}", {"alt": "media", "supportsAllDrives": "true"}, binario=True)
+
+
 # ---------------------------------------------------------------------------
 # Listado y descarga (aislados para poder mockearlos en los tests)
 # ---------------------------------------------------------------------------

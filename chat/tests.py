@@ -1406,30 +1406,36 @@ class AgendaIntegracionTests(TestCase):
         self.assertEqual(mock_agenda.call_args.args[0], "pruebas@azerta.cl")   # actua como quien pregunta
 
 
-FINDER_CONFIG = dict(AZERTA_FINDER_USUARIOS={"palarcon@azerta.cl", "cibacache@azerta.cl"})
+FINDER_CONFIG = dict(AZERTA_FINDER_FILE_ID="file-id",
+                     AZERTA_FINDER_USUARIOS={"palarcon@azerta.cl", "cibacache@azerta.cl"})
+
+
+def _xlsx_bytes(encabezados, filas):
+    """Bytes de un .xlsx real en memoria, para simular lo que devuelve
+    drive.descargar_archivo (nunca toca disco)."""
+    import io as _io
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(encabezados)
+    for f in filas:
+        ws.append(f)
+    buf = _io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 @override_settings(**FINDER_CONFIG)
 class AzertaFinderTests(TestCase):
     """chat/finder.py: acceso solo a la lista de correos, columnas
     detectadas por su encabezado (la planilla no la administra este
-    proyecto, asi que no se asume el nombre exacto de cada una). Mismo .xlsx
-    subido tal cual que chat/cuentas.py, no una Sheet nativa (ver
-    CuentasTests para el equivalente)."""
+    proyecto, asi que no se asume el nombre exacto de cada una). Se lee por
+    id via chat/drive.py::descargar_archivo -el archivo esta compartido
+    directo con la cuenta de servicio, no dentro de la carpeta que
+    chat/drive.py sincroniza (ver AzertaFinderNoDependeDeLaCarpetaTests)."""
 
     def setUp(self):
         cache.clear()
-
-    def _planilla(self, encabezados, filas):
-        import openpyxl
-        carpeta = tempfile.mkdtemp()
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.append(encabezados)
-        for f in filas:
-            ws.append(f)
-        wb.save(Path(carpeta) / "contactos.xlsx")
-        return carpeta
 
     def test_usuario_habilitado_es_una_lista_explicita(self):
         from chat import finder
@@ -1444,124 +1450,107 @@ class AzertaFinderTests(TestCase):
         from chat import finder
         self.assertFalse(finder.usuario_habilitado("palarcon@azerta.cl"))
 
-    def test_encuentra_la_columna_de_telefono_aunque_no_se_llame_asi(self):
+    @patch("chat.drive.descargar_archivo")
+    def test_encuentra_la_columna_de_telefono_aunque_no_se_llame_asi(self, mock_descargar):
         """Encabezados reales de la planilla: Revisar, Clave, Organizacion,
         Cargo, Nombre, Mail, Telefono -en ese orden, no Nombre/Telefono
         primero."""
         from chat import finder
-        carpeta = self._planilla(
+        mock_descargar.return_value = _xlsx_bytes(
             ["Revisar", "CLAVE", "ORGANIZACIÓN", "CARGO", "NOMBRE", "MAIL", "TELEFONO"],
             [["NO", "CLIENTE", "ABIF", "Presidente", "Jose Manuel Mena",
              "presidencia@abif.cl", "228922801"]])
-        with override_settings(DOCUMENTOS_DIR=carpeta):
-            fila, candidatos = finder.buscar("Jose Manuel Mena")
+        fila, candidatos = finder.buscar("Jose Manuel Mena")
         self.assertIsNone(candidatos)
         self.assertEqual(fila, {"nombre": "Jose Manuel Mena", "telefono": "228922801"})
+        mock_descargar.assert_called_once_with("file-id")
 
-    def test_columnas_faltantes_da_un_error_legible(self):
+    @patch("chat.drive.descargar_archivo")
+    def test_columnas_faltantes_da_un_error_legible(self, mock_descargar):
         from chat import finder
-        carpeta = self._planilla(["Nombre", "Organización"], [["Ana Rojas", "ABIF"]])
-        with override_settings(DOCUMENTOS_DIR=carpeta):
-            with self.assertRaises(finder.FinderError):
-                finder.buscar("Ana")
+        mock_descargar.return_value = _xlsx_bytes(
+            ["Nombre", "Organización"], [["Ana Rojas", "ABIF"]])
+        with self.assertRaises(finder.FinderError):
+            finder.buscar("Ana")
 
-    def test_nombre_desconocido(self):
+    @patch("chat.drive.descargar_archivo")
+    def test_nombre_desconocido(self, mock_descargar):
         from chat import finder
-        carpeta = self._planilla(["Nombre", "Teléfono"], [["Ana Rojas", "123"]])
-        with override_settings(DOCUMENTOS_DIR=carpeta):
-            fila, candidatos = finder.buscar("nadie existe de verdad")
+        mock_descargar.return_value = _xlsx_bytes(["Nombre", "Teléfono"], [["Ana Rojas", "123"]])
+        fila, candidatos = finder.buscar("nadie existe de verdad")
         self.assertIsNone(fila)
         self.assertIsNone(candidatos)
 
-    def test_nombre_ambiguo_devuelve_candidatos(self):
+    @patch("chat.drive.descargar_archivo")
+    def test_nombre_ambiguo_devuelve_candidatos(self, mock_descargar):
         from chat import finder
-        carpeta = self._planilla(
+        mock_descargar.return_value = _xlsx_bytes(
             ["Nombre", "Teléfono"], [["Ana Rojas", "1"], ["Ana Reyes", "2"]])
-        with override_settings(DOCUMENTOS_DIR=carpeta):
-            fila, candidatos = finder.buscar("Ana")
+        fila, candidatos = finder.buscar("Ana")
         self.assertIsNone(fila)
         self.assertEqual(candidatos, ["Ana Reyes", "Ana Rojas"])
 
-    def test_una_fila_sin_telefono_llega_con_telefono_vacio(self):
+    @patch("chat.drive.descargar_archivo")
+    def test_una_fila_sin_telefono_llega_con_telefono_vacio(self, mock_descargar):
         from chat import finder
-        carpeta = self._planilla(["Nombre", "Teléfono"], [["Ana Rojas", None]])
-        with override_settings(DOCUMENTOS_DIR=carpeta):
-            fila, _ = finder.buscar("Ana")
+        mock_descargar.return_value = _xlsx_bytes(["Nombre", "Teléfono"], [["Ana Rojas", None]])
+        fila, _ = finder.buscar("Ana")
         self.assertEqual(fila["telefono"], "")
 
-    def test_una_fila_sin_nombre_se_descarta(self):
+    @patch("chat.drive.descargar_archivo")
+    def test_una_fila_sin_nombre_se_descarta(self, mock_descargar):
         from chat import finder
-        carpeta = self._planilla(
+        mock_descargar.return_value = _xlsx_bytes(
             ["Nombre", "Teléfono"], [[None, "1"], ["Ana Rojas", "2"]])
-        with override_settings(DOCUMENTOS_DIR=carpeta):
-            self.assertEqual(len(finder.cargar()), 1)
+        self.assertEqual(len(finder.cargar()), 1)
 
-    def test_se_cachea_no_se_relee_en_cada_pregunta(self):
+    @patch("chat.drive.descargar_archivo")
+    def test_se_cachea_no_se_vuelve_a_descargar_en_cada_pregunta(self, mock_descargar):
         from chat import finder
-        import openpyxl
-        carpeta = self._planilla(["Nombre", "Teléfono"], [["Ana Rojas", "1"]])
-        with override_settings(DOCUMENTOS_DIR=carpeta):
-            with patch("openpyxl.load_workbook", wraps=openpyxl.load_workbook) as mock_load:
-                finder.buscar("Ana")
-                finder.buscar("Ana")
-            mock_load.assert_called_once()
+        mock_descargar.return_value = _xlsx_bytes(["Nombre", "Teléfono"], [["Ana Rojas", "1"]])
+        finder.buscar("Ana")
+        finder.buscar("Ana")
+        mock_descargar.assert_called_once()
 
-    def test_sin_archivo_sincronizado_es_un_error_legible(self):
+    @patch("chat.drive.descargar_archivo")
+    def test_forzar_ignora_el_cache(self, mock_descargar):
         from chat import finder
-        with override_settings(DOCUMENTOS_DIR=tempfile.mkdtemp()):
-            with self.assertRaises(finder.FinderError):
-                finder.buscar("Ana")
+        mock_descargar.return_value = _xlsx_bytes(["Nombre", "Teléfono"], [["Ana Rojas", "1"]])
+        finder.cargar()
+        finder.cargar(forzar=True)
+        self.assertEqual(mock_descargar.call_count, 2)
 
-    def test_reemplazar_el_archivo_actualiza_el_cache(self):
+    @override_settings(AZERTA_FINDER_FILE_ID="")
+    def test_sin_id_configurado_es_un_error_legible(self):
         from chat import finder
-        carpeta = Path(self._planilla(["Nombre", "Teléfono"], [["Ana Rojas", "1"]]))
-        with override_settings(DOCUMENTOS_DIR=carpeta):
-            self.assertEqual(finder.buscar("Ana")[0]["telefono"], "1")
-            # se reemplaza el archivo (mismo nombre, contenido nuevo)
-            import openpyxl
-            wb = openpyxl.Workbook(); ws = wb.active
-            ws.append(["Nombre", "Teléfono"]); ws.append(["Ana Rojas", "2"])
-            wb.save(carpeta / "contactos.xlsx")
-            self.assertEqual(finder.buscar("Ana")[0]["telefono"], "2")
+        with self.assertRaises(finder.FinderError):
+            finder.buscar("Ana")
+
+    @patch("chat.drive.descargar_archivo", side_effect=Exception("HTTP 404"))
+    def test_un_error_al_descargar_es_un_error_legible(self, mock_descargar):
+        from chat import finder
+        with self.assertRaises(finder.FinderError):
+            finder.buscar("Ana")
 
 
-@SIN_DOCUMENTOS
-class AzertaFinderDesdeDriveTests(TestCase):
-    """Con DOCUMENTOS_FUENTE=drive: el mismo .xlsx de siempre, sincronizado a
-    DRIVE_CACHE_DIR (ver CuentasDesdeDriveTests, mismo mecanismo)."""
+class AzertaFinderNoDependeDeLaCarpetaTests(TestCase):
+    """El archivo esta compartido directo con la cuenta de servicio, no
+    dentro de GOOGLE_DRIVE_FOLDER_ID: no debe pasar por DRIVE_HOJAS_PERMITIDAS
+    ni por el barrido de esa carpeta (chat/drive.py::_listar_archivos)."""
 
     def setUp(self):
         cache.clear()
-        self.dir = Path(tempfile.mkdtemp())
 
-    @patch("chat.drive.sincronizar_si_toca")
-    def test_lee_el_xlsx_de_drive_por_su_nombre(self, mock_sync):
+    @override_settings(**FINDER_CONFIG, DRIVE_HOJAS_PERMITIDAS=set())
+    @patch("chat.drive.descargar_archivo")
+    @patch("chat.drive._listar_archivos")
+    def test_no_necesita_estar_en_drive_hojas_permitidas_ni_listarse(
+            self, mock_listar, mock_descargar):
         from chat import finder
-        import openpyxl
-        wb = openpyxl.Workbook(); ws = wb.active
-        ws.append(["Nombre", "Teléfono"]); ws.append(["Ana Rojas", "123"])
-        wb.save(self.dir / f"{finder.NOMBRE_EN_DRIVE}.xlsx")
-        with override_settings(DOCUMENTOS_FUENTE="drive", DRIVE_CACHE_DIR=self.dir):
-            fila, _ = finder.buscar("Ana")
+        mock_descargar.return_value = _xlsx_bytes(["Nombre", "Teléfono"], [["Ana Rojas", "123"]])
+        fila, _ = finder.buscar("Ana")
         self.assertEqual(fila["telefono"], "123")
-        mock_sync.assert_called()
-
-    @patch("chat.drive.sincronizar_si_toca")
-    def test_no_confunde_el_xlsx_de_finder_con_el_de_cuentas(self, _sync):
-        from chat import cuentas, finder
-        import openpyxl
-        wb = openpyxl.Workbook(); ws = wb.active
-        ws.append(["Nombre", "Teléfono"]); ws.append(["Ana Rojas", "123"])
-        wb.save(self.dir / f"{finder.NOMBRE_EN_DRIVE}.xlsx")
-        wb2 = openpyxl.Workbook(); ws2 = wb2.active
-        ws2.title = "Detalle Cuenta-Persona"
-        ws2.append(["Detalle Unipersonal"]); ws2.append([])
-        ws2.append(["Cuenta / Cliente", "Persona", "Hrs. X Semana", "Rut", "Apodo"])
-        ws2.append(["CENCOSUD", "Rojas Ana", None, "11.111.111-1", "Ana"])
-        wb2.save(self.dir / "Personas Hrs Sem x Cuenta.xlsx")
-        with override_settings(DOCUMENTOS_FUENTE="drive", DRIVE_CACHE_DIR=self.dir):
-            self.assertEqual(finder.buscar("Ana")[0]["telefono"], "123")
-            self.assertEqual(cuentas.nombres(), ["CENCOSUD"])
+        mock_listar.assert_not_called()
 
 
 @override_settings(**FINDER_CONFIG)

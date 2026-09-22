@@ -1,21 +1,17 @@
-"""Azerta Finder: numero de contacto de cada persona, desde una planilla de
-Drive (un .xlsx subido tal cual, fuera de BUK y de la carpeta de politicas).
+"""Azerta Finder: numero de contacto de cada persona, desde un archivo de
+Drive (un .xlsx) compartido DIRECTO con la cuenta de servicio -no vive
+dentro de la carpeta que chat/drive.py sincroniza, asi que se lee por su id,
+no por nombre dentro de esa carpeta ni via DRIVE_HOJAS_PERMITIDAS.
 
 Acceso restringido por lista de correos (settings.AZERTA_FINDER_USUARIOS),
 mismo criterio que chat/salas.py::usuario_habilitado: es informacion de
 contacto de terceros, confidencial, y se abre persona por persona, sin
 excepcion por rol -ni gerencia ni un superusuario entran si no estan en la
 lista.
-
-Misma mecanica que chat/cuentas.py: el nombre del archivo tiene que estar en
-settings.DRIVE_HOJAS_PERMITIDAS para que chat/drive.py lo sincronice (baja el
-.xlsx completo, no pasa por el exportador de Sheets, que solo entrega la
-primera pestaña de una Sheet nativa -esto no es una). Aca se lee de esa copia
-local, cacheada por fecha de modificacion del archivo.
 """
 
+import io
 import logging
-from pathlib import Path
 
 from django.conf import settings
 from django.core.cache import cache
@@ -24,10 +20,7 @@ from .intents import normalizar
 
 logger = logging.getLogger(__name__)
 
-# Nombre tal cual lo deja chat/drive.py al sincronizar el .xlsx desde Drive
-# (ver drive._nombre_local). El glob con "*" tolera el sufijo "-<id>" que se
-# agrega solo si hubiera un choque de nombres.
-NOMBRE_EN_DRIVE = "BBDD FIESTA 18 AÑOS V.24.10"
+CACHE_FILAS = "finder:filas:v2"
 
 # Encabezados posibles para cada columna que Iris necesita, buscados como
 # substring del encabezado ya normalizado (sin tildes, en minuscula): la
@@ -48,29 +41,6 @@ def usuario_habilitado(correo):
     return (correo or "").strip().lower() in permitidos
 
 
-def _usa_drive():
-    return getattr(settings, "DOCUMENTOS_FUENTE", "local") == "drive"
-
-
-def _carpeta():
-    """Misma logica que chat/documentos.py, chat/turnos.py y chat/cuentas.py."""
-    if _usa_drive():
-        from . import drive
-
-        drive.sincronizar_si_toca(settings.DRIVE_CACHE_DIR)
-        return Path(settings.DRIVE_CACHE_DIR)
-    return Path(settings.DOCUMENTOS_DIR)
-
-
-def archivo():
-    carpeta = _carpeta()
-    if not carpeta.exists():
-        return None
-    patron = f"{NOMBRE_EN_DRIVE}*.xlsx" if _usa_drive() else "*.xlsx"
-    hallazgos = sorted(carpeta.glob(patron))
-    return hallazgos[0] if hallazgos else None
-
-
 def _columna(encabezados, claves):
     for i, encabezado in enumerate(encabezados):
         plano = normalizar(str(encabezado or ""))
@@ -88,22 +58,30 @@ def _valor(fila, idx):
 def cargar(forzar=False):
     """Filas de la planilla: [{"nombre", "telefono"}, ...].
 
-    Cacheadas por fecha de modificacion del archivo: reemplazarlo en Drive
-    actualiza los contactos sin reiniciar nada. Lanza FinderError si el
-    archivo no esta (todavia no se sincronizo, o no esta en
-    DRIVE_HOJAS_PERMITIDAS) o si no se pudo leer -asi la herramienta que
-    llama puede avisar en vez de decir "no encontrada" por un problema que
-    no tiene nada que ver con el nombre buscado.
+    Cacheadas con TTL fijo (settings.AZERTA_FINDER_CACHE_TTL): a diferencia
+    de la carpeta sincronizada, no hay un archivo local cuyo mtime avise que
+    cambio, asi que no vale la pena distinguir "cache" de "descarga de
+    verdad" -se vuelve a descargar entero cuando vence, nada mas. Lanza
+    FinderError si el archivo no esta configurado o no se pudo leer, para que
+    la herramienta que llama pueda avisar en vez de decir "no encontrada" por
+    un problema que no tiene nada que ver con el nombre buscado.
     """
-    ruta = archivo()
-    if ruta is None:
+    if not forzar:
+        cacheado = cache.get(CACHE_FILAS)
+        if cacheado is not None:
+            return cacheado
+
+    file_id = getattr(settings, "AZERTA_FINDER_FILE_ID", "")
+    if not file_id or not settings.GOOGLE_DRIVE_CREDENTIALS:
         raise FinderError("Azerta Finder no está disponible todavía. Avisa al equipo técnico.")
 
-    firma = (str(ruta), ruta.stat().st_mtime_ns)
-    if not forzar:
-        cacheado = cache.get("finder:filas")
-        if cacheado is not None and cacheado.get("firma") == firma:
-            return cacheado["filas"]
+    from . import drive
+
+    try:
+        contenido = drive.descargar_archivo(file_id)
+    except Exception as error:
+        logger.warning("azerta finder: no pude descargar la planilla: %s", error)
+        raise FinderError("No pude leer la planilla de contactos en este momento.")
 
     try:
         import openpyxl
@@ -111,12 +89,12 @@ def cargar(forzar=False):
         raise FinderError("Azerta Finder no está disponible todavía. Avisa al equipo técnico.")
 
     try:
-        libro = openpyxl.load_workbook(ruta, data_only=True, read_only=True)
+        libro = openpyxl.load_workbook(io.BytesIO(contenido), data_only=True, read_only=True)
         hoja = libro[libro.sheetnames[0]]
         crudas = list(hoja.iter_rows(values_only=True))
         libro.close()
     except Exception as error:
-        logger.warning("azerta finder: no se pudo leer %s: %s", ruta.name, error)
+        logger.warning("azerta finder: no se pudo leer la planilla: %s", error)
         raise FinderError("No pude leer la planilla de contactos en este momento.")
 
     if not crudas:
@@ -134,7 +112,7 @@ def cargar(forzar=False):
                 continue
             filas.append({"nombre": nombre, "telefono": _valor(cruda, idx_telefono)})
 
-    cache.set("finder:filas", {"firma": firma, "filas": filas}, settings.AZERTA_FINDER_CACHE_TTL)
+    cache.set(CACHE_FILAS, filas, settings.AZERTA_FINDER_CACHE_TTL)
     return filas
 
 
