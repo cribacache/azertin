@@ -506,17 +506,20 @@ class GeminiTests(TestCase):
         self.assertTrue(asistente.disponible())
         self.assertEqual(asistente.modelo(), settings.GEMINI_MODEL)
 
-    @override_settings(SALAS_REUNIONES_USUARIOS={"paula@azerta.cl"})
+    @override_settings(SALAS_REUNIONES_USUARIOS={"paula@azerta.cl"},
+                       AZERTA_FINDER_USUARIOS={"paula@azerta.cl"})
     def test_los_esquemas_se_traducen_al_formato_de_google(self):
         from chat import asistente, herramientas
-        # quien esta en la lista de salas ve todas las herramientas...
+        # quien esta en ambas listas (salas y finder) ve todas las herramientas...
         tools = asistente._declaraciones_gemini(_contexto_de("paula@azerta.cl"))
         self.assertEqual({f.name for f in tools[0].function_declarations},
                          set(herramientas.FUNCIONES))
-        # ...el resto, todas menos salas y agenda de reuniones.
+        # ...el resto, todas menos salas/agenda y Azerta Finder.
         tools = asistente._declaraciones_gemini(_contexto_de("ana@azerta.cl"))
-        self.assertEqual({f.name for f in tools[0].function_declarations},
-                         set(herramientas.FUNCIONES) - herramientas.HERRAMIENTAS_SALAS)
+        self.assertEqual(
+            {f.name for f in tools[0].function_declarations},
+            set(herramientas.FUNCIONES) - herramientas.HERRAMIENTAS_SALAS
+            - herramientas.HERRAMIENTAS_FINDER)
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     @patch("chat.asistente._cliente_gemini")
@@ -1401,6 +1404,328 @@ class AgendaIntegracionTests(TestCase):
         self.assertFalse(segunda["meta"]["desde_cache"])
         self.assertEqual(mock_agenda.call_count, 2)
         self.assertEqual(mock_agenda.call_args.args[0], "pruebas@azerta.cl")   # actua como quien pregunta
+
+
+FINDER_CONFIG = dict(AZERTA_FINDER_USUARIOS={"palarcon@azerta.cl", "cibacache@azerta.cl"})
+
+
+@override_settings(**FINDER_CONFIG)
+class AzertaFinderTests(TestCase):
+    """chat/finder.py: acceso solo a la lista de correos, columnas
+    detectadas por su encabezado (la planilla no la administra este
+    proyecto, asi que no se asume el nombre exacto de cada una). Mismo .xlsx
+    subido tal cual que chat/cuentas.py, no una Sheet nativa (ver
+    CuentasTests para el equivalente)."""
+
+    def setUp(self):
+        cache.clear()
+
+    def _planilla(self, encabezados, filas):
+        import openpyxl
+        carpeta = tempfile.mkdtemp()
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(encabezados)
+        for f in filas:
+            ws.append(f)
+        wb.save(Path(carpeta) / "contactos.xlsx")
+        return carpeta
+
+    def test_usuario_habilitado_es_una_lista_explicita(self):
+        from chat import finder
+        self.assertTrue(finder.usuario_habilitado("palarcon@azerta.cl"))
+        self.assertTrue(finder.usuario_habilitado("PALARCON@AZERTA.CL"))  # mayusculas no importan
+        self.assertFalse(finder.usuario_habilitado("ana@azerta.cl"))
+        self.assertFalse(finder.usuario_habilitado(""))
+        self.assertFalse(finder.usuario_habilitado(None))
+
+    @override_settings(AZERTA_FINDER_USUARIOS=set())
+    def test_lista_vacia_no_habilita_a_nadie(self):
+        from chat import finder
+        self.assertFalse(finder.usuario_habilitado("palarcon@azerta.cl"))
+
+    def test_encuentra_la_columna_de_telefono_aunque_no_se_llame_asi(self):
+        """Encabezados reales de la planilla: Revisar, Clave, Organizacion,
+        Cargo, Nombre, Mail, Telefono -en ese orden, no Nombre/Telefono
+        primero."""
+        from chat import finder
+        carpeta = self._planilla(
+            ["Revisar", "CLAVE", "ORGANIZACIÓN", "CARGO", "NOMBRE", "MAIL", "TELEFONO"],
+            [["NO", "CLIENTE", "ABIF", "Presidente", "Jose Manuel Mena",
+             "presidencia@abif.cl", "228922801"]])
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            fila, candidatos = finder.buscar("Jose Manuel Mena")
+        self.assertIsNone(candidatos)
+        self.assertEqual(fila, {"nombre": "Jose Manuel Mena", "telefono": "228922801"})
+
+    def test_columnas_faltantes_da_un_error_legible(self):
+        from chat import finder
+        carpeta = self._planilla(["Nombre", "Organización"], [["Ana Rojas", "ABIF"]])
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            with self.assertRaises(finder.FinderError):
+                finder.buscar("Ana")
+
+    def test_nombre_desconocido(self):
+        from chat import finder
+        carpeta = self._planilla(["Nombre", "Teléfono"], [["Ana Rojas", "123"]])
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            fila, candidatos = finder.buscar("nadie existe de verdad")
+        self.assertIsNone(fila)
+        self.assertIsNone(candidatos)
+
+    def test_nombre_ambiguo_devuelve_candidatos(self):
+        from chat import finder
+        carpeta = self._planilla(
+            ["Nombre", "Teléfono"], [["Ana Rojas", "1"], ["Ana Reyes", "2"]])
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            fila, candidatos = finder.buscar("Ana")
+        self.assertIsNone(fila)
+        self.assertEqual(candidatos, ["Ana Reyes", "Ana Rojas"])
+
+    def test_una_fila_sin_telefono_llega_con_telefono_vacio(self):
+        from chat import finder
+        carpeta = self._planilla(["Nombre", "Teléfono"], [["Ana Rojas", None]])
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            fila, _ = finder.buscar("Ana")
+        self.assertEqual(fila["telefono"], "")
+
+    def test_una_fila_sin_nombre_se_descarta(self):
+        from chat import finder
+        carpeta = self._planilla(
+            ["Nombre", "Teléfono"], [[None, "1"], ["Ana Rojas", "2"]])
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            self.assertEqual(len(finder.cargar()), 1)
+
+    def test_se_cachea_no_se_relee_en_cada_pregunta(self):
+        from chat import finder
+        import openpyxl
+        carpeta = self._planilla(["Nombre", "Teléfono"], [["Ana Rojas", "1"]])
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            with patch("openpyxl.load_workbook", wraps=openpyxl.load_workbook) as mock_load:
+                finder.buscar("Ana")
+                finder.buscar("Ana")
+            mock_load.assert_called_once()
+
+    def test_sin_archivo_sincronizado_es_un_error_legible(self):
+        from chat import finder
+        with override_settings(DOCUMENTOS_DIR=tempfile.mkdtemp()):
+            with self.assertRaises(finder.FinderError):
+                finder.buscar("Ana")
+
+    def test_reemplazar_el_archivo_actualiza_el_cache(self):
+        from chat import finder
+        carpeta = Path(self._planilla(["Nombre", "Teléfono"], [["Ana Rojas", "1"]]))
+        with override_settings(DOCUMENTOS_DIR=carpeta):
+            self.assertEqual(finder.buscar("Ana")[0]["telefono"], "1")
+            # se reemplaza el archivo (mismo nombre, contenido nuevo)
+            import openpyxl
+            wb = openpyxl.Workbook(); ws = wb.active
+            ws.append(["Nombre", "Teléfono"]); ws.append(["Ana Rojas", "2"])
+            wb.save(carpeta / "contactos.xlsx")
+            self.assertEqual(finder.buscar("Ana")[0]["telefono"], "2")
+
+
+@SIN_DOCUMENTOS
+class AzertaFinderDesdeDriveTests(TestCase):
+    """Con DOCUMENTOS_FUENTE=drive: el mismo .xlsx de siempre, sincronizado a
+    DRIVE_CACHE_DIR (ver CuentasDesdeDriveTests, mismo mecanismo)."""
+
+    def setUp(self):
+        cache.clear()
+        self.dir = Path(tempfile.mkdtemp())
+
+    @patch("chat.drive.sincronizar_si_toca")
+    def test_lee_el_xlsx_de_drive_por_su_nombre(self, mock_sync):
+        from chat import finder
+        import openpyxl
+        wb = openpyxl.Workbook(); ws = wb.active
+        ws.append(["Nombre", "Teléfono"]); ws.append(["Ana Rojas", "123"])
+        wb.save(self.dir / f"{finder.NOMBRE_EN_DRIVE}.xlsx")
+        with override_settings(DOCUMENTOS_FUENTE="drive", DRIVE_CACHE_DIR=self.dir):
+            fila, _ = finder.buscar("Ana")
+        self.assertEqual(fila["telefono"], "123")
+        mock_sync.assert_called()
+
+    @patch("chat.drive.sincronizar_si_toca")
+    def test_no_confunde_el_xlsx_de_finder_con_el_de_cuentas(self, _sync):
+        from chat import cuentas, finder
+        import openpyxl
+        wb = openpyxl.Workbook(); ws = wb.active
+        ws.append(["Nombre", "Teléfono"]); ws.append(["Ana Rojas", "123"])
+        wb.save(self.dir / f"{finder.NOMBRE_EN_DRIVE}.xlsx")
+        wb2 = openpyxl.Workbook(); ws2 = wb2.active
+        ws2.title = "Detalle Cuenta-Persona"
+        ws2.append(["Detalle Unipersonal"]); ws2.append([])
+        ws2.append(["Cuenta / Cliente", "Persona", "Hrs. X Semana", "Rut", "Apodo"])
+        ws2.append(["CENCOSUD", "Rojas Ana", None, "11.111.111-1", "Ana"])
+        wb2.save(self.dir / "Personas Hrs Sem x Cuenta.xlsx")
+        with override_settings(DOCUMENTOS_FUENTE="drive", DRIVE_CACHE_DIR=self.dir):
+            self.assertEqual(finder.buscar("Ana")[0]["telefono"], "123")
+            self.assertEqual(cuentas.nombres(), ["CENCOSUD"])
+
+
+@override_settings(**FINDER_CONFIG)
+class HerramientaContactoDePersonaTests(TestCase):
+    """chat/herramientas.py::contacto_de_persona: la barrera de acceso, no
+    la busqueda en si (ya cubierta en AzertaFinderTests)."""
+
+    def setUp(self):
+        cache.clear()
+
+    def test_quien_no_esta_en_la_lista_no_toca_la_planilla(self):
+        from chat import herramientas
+        with patch("chat.finder.buscar") as mock_buscar:
+            salida = herramientas.contacto_de_persona(
+                "Ana", _contexto=_contexto_de("ana@azerta.cl"))
+        self.assertEqual(salida, {"error": herramientas.NO_HABILITADA})
+        mock_buscar.assert_not_called()
+
+    def test_sin_contexto_no_toca_la_planilla(self):
+        from chat import herramientas
+        with patch("chat.finder.buscar") as mock_buscar:
+            salida = herramientas.contacto_de_persona("Ana", _contexto=None)
+        self.assertEqual(salida, {"error": herramientas.NO_HABILITADA})
+        mock_buscar.assert_not_called()
+
+    def test_quien_esta_en_la_lista_recibe_el_telefono(self):
+        from chat import herramientas
+        with patch("chat.finder.buscar", return_value=({"nombre": "Ana Rojas", "telefono": "123"}, None)):
+            salida = herramientas.contacto_de_persona(
+                "Ana", _contexto=_contexto_de("palarcon@azerta.cl"))
+        self.assertEqual(salida, {"encontrada": True, "nombre": "Ana Rojas", "telefono": "123"})
+
+    def test_sin_telefono_registrado_lo_dice_sin_inventar_uno(self):
+        from chat import herramientas
+        with patch("chat.finder.buscar", return_value=({"nombre": "Ana Rojas", "telefono": ""}, None)):
+            salida = herramientas.contacto_de_persona(
+                "Ana", _contexto=_contexto_de("palarcon@azerta.cl"))
+        self.assertTrue(salida["encontrada"])
+        self.assertNotIn("telefono", salida)
+
+    def test_nombre_ambiguo_pide_elegir(self):
+        from chat import herramientas
+        with patch("chat.finder.buscar", return_value=(None, ["Ana Reyes", "Ana Rojas"])):
+            salida = herramientas.contacto_de_persona(
+                "Ana", _contexto=_contexto_de("palarcon@azerta.cl"))
+        self.assertFalse(salida["encontrada"])
+        self.assertEqual(salida["candidatos"], ["Ana Reyes", "Ana Rojas"])
+
+    def test_error_de_la_planilla_llega_como_mensaje(self):
+        from chat import herramientas, finder
+        with patch("chat.finder.buscar", side_effect=finder.FinderError("no configurado")):
+            salida = herramientas.contacto_de_persona(
+                "Ana", _contexto=_contexto_de("palarcon@azerta.cl"))
+        self.assertEqual(salida, {"error": "no configurado"})
+
+
+@override_settings(**FINDER_CONFIG)
+class AzertaFinderApagadorTests(TestCase):
+    """Igual criterio que SalasApagadorTests: lista explicita de correos,
+    sin excepcion por rol, y separado de las herramientas de salas -son dos
+    llaves independientes."""
+
+    def _declaradas(self, contexto):
+        from chat import asistente
+        return {f.name for tool in asistente._declaraciones_gemini(contexto)
+               for f in tool.function_declarations}
+
+    def test_alguien_de_la_lista_esta_habilitado(self):
+        from chat import asistente
+        self.assertTrue(asistente.finder_habilitado(_contexto_de("palarcon@azerta.cl")))
+
+    def test_cualquier_otra_persona_no(self):
+        from chat import asistente
+        self.assertFalse(asistente.finder_habilitado(_contexto_de("paula@azerta.cl")))
+
+    def test_gerencia_y_superusuario_tampoco_entran_si_no_estan_en_la_lista(self):
+        from django.contrib.auth.models import User
+        from chat import asistente
+        from chat.perfil import Contexto
+        jefe = User.objects.create_user(
+            username="jefe@azerta.cl", email="jefe@azerta.cl", is_superuser=True)
+        self.assertFalse(asistente.finder_habilitado(Contexto(rol="gerencia", usuario=jefe)))
+
+    def test_finder_y_salas_son_llaves_independientes(self):
+        """Estar habilitado para salas no da acceso a Finder, ni al reves."""
+        from chat import asistente
+        ctx_paula = _contexto_de("paula@azerta.cl")           # solo salas (ver SalasApagadorTests)
+        with override_settings(SALAS_REUNIONES_USUARIOS={"paula@azerta.cl"}):
+            self.assertTrue(asistente.salas_habilitadas(ctx_paula))
+            self.assertFalse(asistente.finder_habilitado(ctx_paula))
+        ctx_cristofer = _contexto_de("cibacache@azerta.cl")    # solo finder
+        self.assertTrue(asistente.finder_habilitado(ctx_cristofer))
+        self.assertFalse(asistente.salas_habilitadas(ctx_cristofer))
+
+    def test_la_herramienta_se_declara_solo_a_quien_esta_en_la_lista(self):
+        self.assertIn("contacto_de_persona", self._declaradas(_contexto_de("palarcon@azerta.cl")))
+        self.assertNotIn("contacto_de_persona", self._declaradas(_contexto_de("ana@azerta.cl")))
+        self.assertNotIn("contacto_de_persona", self._declaradas(None))
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba")
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_quien_no_esta_en_la_lista_no_ve_nada_de_esto_en_las_instrucciones(
+            self, mock_cliente, mock_buk):
+        mock_cliente.return_value.models.generate_content.return_value = _respuesta_gemini(
+            texto="Todo bien.")
+        self.client.post("/api/chat/", data=json.dumps({"message": "hola"}),
+                         content_type="application/json")  # pruebas@azerta.cl: fuera de la lista
+        config = mock_cliente.return_value.models.generate_content.call_args.kwargs["config"]
+        self.assertNotIn("contacto_de_persona", config.system_instruction)
+        self.assertNotIn("Azerta Finder", config.system_instruction)
+        declaradas = {f.name for t in config.tools for f in t.function_declarations}
+        self.assertNotIn("contacto_de_persona", declaradas)
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba",
+                       AZERTA_FINDER_USUARIOS={"pruebas@azerta.cl"})
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    @patch("chat.asistente._cliente_gemini")
+    def test_quien_esta_en_la_lista_recibe_la_regla_y_la_herramienta(
+            self, mock_cliente, mock_buk):
+        mock_cliente.return_value.models.generate_content.return_value = _respuesta_gemini(
+            texto="Todo bien.")
+        self.client.post("/api/chat/", data=json.dumps({"message": "hola"}),
+                         content_type="application/json")
+        config = mock_cliente.return_value.models.generate_content.call_args.kwargs["config"]
+        self.assertIn("contacto_de_persona", config.system_instruction)
+        self.assertIn("/finder", config.system_instruction)  # el identificador
+        declaradas = {f.name for t in config.tools for f in t.function_declarations}
+        self.assertIn("contacto_de_persona", declaradas)
+
+    @override_settings(AZERTA_FINDER_USUARIOS={"pruebas@azerta.cl"})
+    def test_el_cache_de_respuestas_separa_a_quien_tiene_finder(self):
+        from chat.perfil import ambito_cache
+        con_finder = ambito_cache(_contexto_de("pruebas@azerta.cl"))
+        sin_finder = ambito_cache(_contexto_de("ana@azerta.cl"))
+        self.assertNotEqual(con_finder, sin_finder)
+        self.assertTrue(con_finder.endswith("+finder"))
+
+    @override_settings(SALAS_REUNIONES_USUARIOS={"paula@azerta.cl"},
+                       AZERTA_FINDER_USUARIOS={"paula@azerta.cl"})
+    def test_alguien_con_ambas_llaves_tiene_los_dos_sufijos(self):
+        from chat.perfil import ambito_cache
+        ambito = ambito_cache(_contexto_de("paula@azerta.cl"))
+        self.assertIn("+agenda", ambito)
+        self.assertIn("+finder", ambito)
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba", AZERTA_FINDER_USUARIOS={"pruebas@azerta.cl"})
+    @patch("chat.finder.buscar", return_value=({"nombre": "Jose Mena", "telefono": "123"}, None))
+    @patch("chat.asistente._cliente_gemini")
+    def test_de_punta_a_punta_el_identificador_llega_a_gemini_y_llama_la_herramienta(
+            self, mock_cliente, mock_buscar):
+        """"/finder <nombre>" sigue pasando por Gemini (a diferencia de un
+        atajo que lo resolviera antes): esto simula que el modelo, siguiendo
+        _REGLA_FINDER, elige contacto_de_persona con el nombre correcto."""
+        pedido = _PedidoGemini("contacto_de_persona", {"nombre": "Jose Mena"})
+        mock_cliente.return_value.models.generate_content.side_effect = [
+            _respuesta_gemini(llamadas=[pedido]),
+            _respuesta_gemini(texto="El teléfono de Jose Mena es 123."),
+        ]
+        cuerpo = self.client.post("/api/chat/", data=json.dumps({"message": "/finder Jose Mena"}),
+                                  content_type="application/json").json()
+        mock_buscar.assert_called_once_with("Jose Mena")
+        self.assertIn("123", cuerpo["answer"])
+        self.assertIn("contacto_de_persona", cuerpo["meta"]["herramientas"])
 
 
 @SIN_DOCUMENTOS

@@ -104,12 +104,13 @@ def ambito_cache(ctx):
     ejecutivos entre sí solo dentro de la misma familia de rol. Sin esto, un
     ejecutivo podría recibir del caché la respuesta completa de un gerente.
 
-    Quien tiene salas y agenda de reuniones habilitadas (lista de correos, ver
-    chat/salas.py) queda aparte: para quien no las tiene, "quien tiene reunion
-    manana" se responde "no tengo acceso a agendas", y esa respuesta no puede
-    servirse del caché a quien si las tiene (ni al reves) durante 10 minutos.
+    Quien tiene salas y agenda de reuniones, o Azerta Finder, habilitados
+    (listas de correos, ver chat/salas.py y chat/finder.py) queda aparte: para
+    quien no las tiene, esas preguntas se responden "no tengo acceso", y esa
+    respuesta no puede servirse del caché a quien si las tiene (ni al reves)
+    durante la ventana del caché.
     """
-    from . import salas
+    from . import finder, salas
 
     if ctx.es_gerencia:
         base = "gerencia"
@@ -118,4 +119,8 @@ def ambito_cache(ctx):
     else:
         base = f"ejecutivo:{ctx.familia or f'emp{ctx.employee_id or 0}'}"
     correo = getattr(getattr(ctx, "usuario", None), "email", "")
-    return f"{base}+agenda" if salas.usuario_habilitado(correo) else base
+    if salas.usuario_habilitado(correo):
+        base += "+agenda"
+    if finder.usuario_habilitado(correo):
+        base += "+finder"
+    return base

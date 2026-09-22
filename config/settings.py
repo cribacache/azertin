@@ -131,6 +131,19 @@ GOOGLE_WORKSPACE_ADMIN = os.getenv("GOOGLE_WORKSPACE_ADMIN", "").strip()
 # menciona en las instrucciones (chat/asistente.py::salas_habilitadas).
 SALAS_REUNIONES_HABILITADO = os.getenv("SALAS_REUNIONES_HABILITADO", "True").lower() == "true"
 
+# ---------------------------------------------------------------------------
+# Azerta Finder: numero de contacto de cada persona, desde una planilla de
+# Drive (chat/finder.py::NOMBRE_EN_DRIVE, que ademas tiene que estar en
+# DRIVE_HOJAS_PERMITIDAS mas abajo para que se sincronice). Acceso restringido
+# por lista de correos, mismo criterio que salas (ver mas abajo): es
+# informacion de contacto de terceros, confidencial, y se abre persona por
+# persona.
+# ---------------------------------------------------------------------------
+AZERTA_FINDER_USUARIOS = {
+    c.strip().lower() for c in os.getenv("AZERTA_FINDER_USUARIOS", "").split(",") if c.strip()
+}
+AZERTA_FINDER_CACHE_TTL = int(os.getenv("AZERTA_FINDER_CACHE_TTL", "600"))
+
 # Quien puede usar salas y agenda de reuniones (chat/salas.py::usuario_habilitado):
 # SOLO los correos de esta lista, separados por coma, y ademas el apagador de
 # arriba en True. Vacia = nadie, tampoco gerencia ni superusuarios: la agenda

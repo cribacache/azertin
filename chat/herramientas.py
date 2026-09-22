@@ -532,6 +532,42 @@ def salas_habilitadas_para(contexto):
     return salas.usuario_habilitado(_correo_de(contexto))
 
 
+def finder_habilitado_para(contexto):
+    """Si quien pregunta puede usar Azerta Finder (lista de correos en
+    settings, ver chat/finder.py::usuario_habilitado)."""
+    from . import finder
+
+    return finder.usuario_habilitado(_correo_de(contexto))
+
+
+def contacto_de_persona(nombre, _contexto=None):
+    """Numero de contacto de una persona, desde Azerta Finder (una planilla
+    aparte de Drive, fuera de BUK). Acceso restringido: ver
+    finder_habilitado_para. Resuelve el nombre igual que las herramientas de
+    BUK (por tokens en comun), pero contra esa planilla, no contra la nomina.
+    """
+    from . import finder
+
+    if not finder_habilitado_para(_contexto):
+        return {"error": NO_HABILITADA}
+
+    try:
+        fila, candidatos = finder.buscar(nombre)
+    except finder.FinderError as error:
+        return {"error": str(error)}
+
+    if fila is None and candidatos is None:
+        return {"encontrada": False,
+                "motivo": "No hay nadie con ese nombre en Azerta Finder."}
+    if fila is None:
+        return {"encontrada": False, "motivo": "El nombre coincide con varias personas.",
+                "candidatos": candidatos}
+    if not fila["telefono"]:
+        return {"encontrada": True, "nombre": fila["nombre"],
+                "motivo": "Está en Azerta Finder, pero no tiene un teléfono registrado."}
+    return {"encontrada": True, "nombre": fila["nombre"], "telefono": fila["telefono"]}
+
+
 def salas_disponibles(fecha, hora_inicio, hora_fin, _contexto=None):
     """Que salas de reuniones estan libres u ocupadas en un rango horario.
 
@@ -639,15 +675,23 @@ def reuniones_de_persona(nombre=None, fecha=None, fecha_hasta=None, hora_inicio=
 HERRAMIENTAS_SALAS = {"salas_disponibles", "crear_reunion", "quien_esta_en_sala",
                       "reuniones_de_persona"}
 
+# Azerta Finder (numero de contacto): misma logica de correos habilitados que
+# salas, pero es una llave aparte -quien tiene una no necesariamente tiene la
+# otra (ver chat/finder.py).
+HERRAMIENTAS_FINDER = {"contacto_de_persona"}
+
 # Herramientas que necesitan saber quien pregunta (su correo real), no solo
 # los argumentos que arma el modelo: chat/asistente.py les inyecta
 # `_contexto` antes de llamarlas, fuera del esquema que ve Gemini.
-NECESITAN_CONTEXTO = HERRAMIENTAS_SALAS
+NECESITAN_CONTEXTO = HERRAMIENTAS_SALAS | HERRAMIENTAS_FINDER
 
 # Hablan con Calendar en tiempo real (disponibilidad y agenda que cambian
 # minuto a minuto), o tienen efecto de lado (crean un evento real), o leen la
 # agenda de una persona: cachear su respuesta serviria datos viejos -y, peor,
 # la agenda de alguien a quien no deberia verla-. Ver chat/respuestas.py.
+# Azerta Finder no esta aca: el numero de una persona no cambia de un minuto a
+# otro, y chat/perfil.py::ambito_cache ya separa el cache de quien tiene
+# acceso del de quien no.
 NO_CACHEABLES = HERRAMIENTAS_SALAS
 
 
@@ -692,6 +736,7 @@ FUNCIONES = {
     "crear_reunion": crear_reunion,
     "quien_esta_en_sala": quien_esta_en_sala,
     "reuniones_de_persona": reuniones_de_persona,
+    "contacto_de_persona": contacto_de_persona,
 }
 
 _FECHA = {"type": "string", "description": "Fecha en formato AAAA-MM-DD."}
@@ -1157,6 +1202,24 @@ ESQUEMAS = [
                     "texto": {"type": "string",
                               "description": "Palabra a buscar en el titulo o la descripcion de la reunion."},
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "contacto_de_persona",
+            "description": (
+                "Numero de telefono/celular de UNA persona, desde Azerta "
+                "Finder. Usar SOLO cuando pregunten explicitamente por un "
+                "telefono, celular, whatsapp o 'como la contacto': no la "
+                "llames para ningun otro tipo de pregunta sobre esa persona "
+                "(para eso estan info_persona, ausencias_de_persona, etc)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"nombre": {"type": "string"}},
+                "required": ["nombre"],
             },
         },
     },
