@@ -4531,6 +4531,33 @@ class DocxTests(_DjangoTestCase):
 
 
 # ===========================================================================
+# Configuracion de logging (config/settings.py::LOGGING).
+# ===========================================================================
+
+class LoggingConfigTests(_DjangoTestCase):
+    """Sin un logger "chat" configurado, cualquier logging.getLogger(__name__)
+    de la app ("chat.drive", "chat.herramientas", ...) no tiene handler propio
+    ni llega al "django" de mas arriba, y con nivel INFO por debajo de lo que
+    el "ultimo recurso" de Python muestra (WARNING): el resumen de cada
+    sincronizacion con Drive, entre otros, se perdia sin que nada avisara."""
+
+    def test_un_logger_cualquiera_de_la_app_tiene_handler_desde_info(self):
+        import logging
+        logger = logging.getLogger("chat.drive")
+        self.assertLessEqual(logger.getEffectiveLevel(), logging.INFO)
+
+        actual, tiene_handler = logger, False
+        while actual:
+            if actual.handlers:
+                tiene_handler = True
+                break
+            if not actual.propagate:
+                break
+            actual = actual.parent
+        self.assertTrue(tiene_handler)
+
+
+# ===========================================================================
 # Cabeceras de seguridad, CORS y fuerza-bruta del admin.
 # ===========================================================================
 

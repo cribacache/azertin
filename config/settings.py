@@ -249,7 +249,17 @@ LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "handlers": {"console": {"class": "logging.StreamHandler"}},
-    "loggers": {"django": {"handlers": ["console"], "level": "INFO"}},
+    "loggers": {
+        "django": {"handlers": ["console"], "level": "INFO"},
+        # Cada modulo de la app pide su logger como logging.getLogger(__name__)
+        # ("chat.drive", "chat.herramientas", ...): configurar "chat" alcanza
+        # para todos por jerarquia. Sin esto, cualquier logger.info() de la
+        # app (el resumen de cada sincronizacion con Drive, quien consulto la
+        # agenda de quien, etc.) se perdia -sin handler propio, sin llegar al
+        # "django" de arriba, y por debajo del nivel que el "ultimo recurso"
+        # de Python muestra solo (WARNING).
+        "chat": {"handlers": ["console"], "level": "INFO"},
+    },
 }
 
 # Rate limit del login del admin (chat/middleware.py::AdminBruteForceMiddleware).
