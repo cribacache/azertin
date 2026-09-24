@@ -369,7 +369,7 @@ body::after {
 .contacto-datos {
   margin: 6px 0 0;
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
   column-gap: 10px;
   row-gap: 3px;
 }
@@ -384,7 +384,9 @@ body::after {
 
 .contacto-datos dd {
   margin: 0;
+  min-width: 0;
   font-size: 12px;
+  overflow-wrap: anywhere;
   color: var(--claro);
 }
 

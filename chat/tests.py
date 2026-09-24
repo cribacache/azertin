@@ -1477,6 +1477,17 @@ class AzertaFinderTests(TestCase):
         self.assertEqual(fila, {"nombre": "Ana Rojas", "telefono": "123"})
 
     @patch("chat.drive.descargar_archivo")
+    def test_un_telefono_guardado_como_numero_no_sale_con_punto_cero(self, mock_descargar):
+        """Un telefono tipeado sin formato de texto en Excel/Sheets queda
+        como celda numerica: openpyxl lo entrega como float (56999813647.0),
+        y sin este arreglo salia con el ".0" pegado en la tarjeta."""
+        from chat import finder
+        mock_descargar.return_value = _xlsx_bytes(
+            ["Nombre", "Teléfono"], [["Ana Rojas", 56999813647]])
+        fila, _ = finder.buscar("Ana")
+        self.assertEqual(fila["telefono"], "56999813647")
+
+    @patch("chat.drive.descargar_archivo")
     def test_columnas_faltantes_da_un_error_legible(self, mock_descargar):
         from chat import finder
         mock_descargar.return_value = _xlsx_bytes(

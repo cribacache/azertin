@@ -66,7 +66,13 @@ def _columna(encabezados, claves):
 def _valor(fila, idx):
     if idx is None or idx >= len(fila) or fila[idx] is None:
         return ""
-    return str(fila[idx]).strip()
+    valor = fila[idx]
+    # Un telefono como "56999813647" en la celda, sin formato de texto, Excel
+    # lo guarda como numero: openpyxl lo entrega como float (56999813647.0) y
+    # sale con el ".0" pegado. Si es un entero exacto, se muestra como tal.
+    if isinstance(valor, float) and valor.is_integer():
+        valor = int(valor)
+    return str(valor).strip()
 
 
 def cargar(forzar=False):
