@@ -1462,8 +1462,19 @@ class AzertaFinderTests(TestCase):
              "presidencia@abif.cl", "228922801"]])
         fila, candidatos = finder.buscar("Jose Manuel Mena")
         self.assertIsNone(candidatos)
-        self.assertEqual(fila, {"nombre": "Jose Manuel Mena", "telefono": "228922801"})
+        self.assertEqual(fila, {
+            "nombre": "Jose Manuel Mena", "telefono": "228922801",
+            "cargo": "Presidente", "organizacion": "ABIF", "mail": "presidencia@abif.cl",
+        })
         mock_descargar.assert_called_once_with("file-id")
+
+    @patch("chat.drive.descargar_archivo")
+    def test_cargo_organizacion_y_mail_son_opcionales(self, mock_descargar):
+        """Sin esas columnas, la fila sale igual -solo con nombre y telefono."""
+        from chat import finder
+        mock_descargar.return_value = _xlsx_bytes(["Nombre", "Teléfono"], [["Ana Rojas", "123"]])
+        fila, _ = finder.buscar("Ana")
+        self.assertEqual(fila, {"nombre": "Ana Rojas", "telefono": "123"})
 
     @patch("chat.drive.descargar_archivo")
     def test_columnas_faltantes_da_un_error_legible(self, mock_descargar):
@@ -1582,6 +1593,17 @@ class HerramientaContactoDePersonaTests(TestCase):
             salida = herramientas.contacto_de_persona(
                 "Ana", _contexto=_contexto_de("palarcon@azerta.cl"))
         self.assertEqual(salida, {"encontrada": True, "nombre": "Ana Rojas", "telefono": "123"})
+
+    def test_incluye_cargo_organizacion_y_mail_si_la_planilla_los_tiene(self):
+        """Aunque solo pidan el telefono, la tarjeta va con todo lo que haya
+        (chat/asistente.py la dibuja aparte del texto)."""
+        from chat import herramientas
+        fila = {"nombre": "Jose Mena", "telefono": "123", "cargo": "Presidente",
+                "organizacion": "ABIF", "mail": "jm@abif.cl"}
+        with patch("chat.finder.buscar", return_value=(fila, None)):
+            salida = herramientas.contacto_de_persona(
+                "Jose", _contexto=_contexto_de("palarcon@azerta.cl"))
+        self.assertEqual(salida, {"encontrada": True, **fila})
 
     def test_sin_telefono_registrado_lo_dice_sin_inventar_uno(self):
         from chat import herramientas
@@ -1715,6 +1737,45 @@ class AzertaFinderApagadorTests(TestCase):
         mock_buscar.assert_called_once_with("Jose Mena")
         self.assertIn("123", cuerpo["answer"])
         self.assertIn("contacto_de_persona", cuerpo["meta"]["herramientas"])
+        # la tarjeta va aparte del texto, con todo el dato disponible
+        self.assertEqual(cuerpo["contacto"],
+                         {"encontrada": True, "nombre": "Jose Mena", "telefono": "123"})
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba", AZERTA_FINDER_USUARIOS={"pruebas@azerta.cl"},
+                       ASISTENTE_ANONIMIZAR=False)
+    @patch("chat.finder.buscar", return_value=(
+        {"nombre": "Jose Mena", "telefono": "123", "cargo": "Presidente",
+         "organizacion": "ABIF", "mail": "jm@abif.cl"}, None))
+    @patch("chat.asistente._cliente_gemini")
+    def test_la_tarjeta_trae_todo_el_dato_aunque_el_texto_no_lo_repita(
+            self, mock_cliente, mock_buscar):
+        """El pedido del usuario en este test es solo por el telefono, pero
+        la tarjeta (vitrina["contacto"]) va con cargo/organizacion/mail
+        igual, sin que el modelo tenga que mencionarlos en el texto."""
+        pedido = _PedidoGemini("contacto_de_persona", {"nombre": "Jose Mena"})
+        mock_cliente.return_value.models.generate_content.side_effect = [
+            _respuesta_gemini(llamadas=[pedido]),
+            _respuesta_gemini(texto="Su teléfono es 123."),
+        ]
+        cuerpo = self.client.post(
+            "/api/chat/", data=json.dumps({"message": "cual es el telefono de Jose Mena"}),
+            content_type="application/json").json()
+        self.assertEqual(cuerpo["contacto"]["cargo"], "Presidente")
+        self.assertEqual(cuerpo["contacto"]["organizacion"], "ABIF")
+        self.assertEqual(cuerpo["contacto"]["mail"], "jm@abif.cl")
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba", AZERTA_FINDER_USUARIOS={"pruebas@azerta.cl"})
+    @patch("chat.finder.buscar", return_value=(None, None))
+    @patch("chat.asistente._cliente_gemini")
+    def test_sin_encontrar_a_nadie_no_hay_tarjeta(self, mock_cliente, mock_buscar):
+        pedido = _PedidoGemini("contacto_de_persona", {"nombre": "Nadie"})
+        mock_cliente.return_value.models.generate_content.side_effect = [
+            _respuesta_gemini(llamadas=[pedido]),
+            _respuesta_gemini(texto="No encontré a esa persona en Azerta Finder."),
+        ]
+        cuerpo = self.client.post("/api/chat/", data=json.dumps({"message": "/finder Nadie"}),
+                                  content_type="application/json").json()
+        self.assertIsNone(cuerpo["contacto"])
 
 
 @SIN_DOCUMENTOS

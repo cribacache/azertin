@@ -137,7 +137,11 @@ _REGLA_FINDER = """
   nombre, sin pedir mas contexto ni interpretarlo como otra cosa. Si "/finder"
   viene sin nombre despues, pedilo. No menciones ni ofrezcas esta herramienta
   para ningun otro tipo de pregunta. Si la persona no tiene un telefono
-  registrado, dilo tal cual, no inventes ni asumas uno."""
+  registrado, dilo tal cual, no inventes ni asumas uno. Cuando SI la
+  encuentra, la interfaz ya dibuja aparte una tarjeta con todos sus datos
+  (cargo, organizacion, mail, telefono): tu respuesta en texto no tiene que
+  repetirlos todos, alcanza con una frase breve confirmando que la
+  encontraste."""
 
 MAX_TURNOS_HISTORIAL = 6  # 3 idas y vueltas: alcanza para el seguimiento sin
                           # inflar cada llamada con toda la conversacion.
@@ -427,10 +431,14 @@ def _ejecutar_pedidos(pedidos, alias, llamadas, contexto=None, vitrina=None):
     entre pedidos, y hacerlo desde varios hilos a la vez arriesgaria perder
     una actualizacion (dos pedidos calculando el mismo seudonimo "Persona 3").
 
-    `vitrina` guarda aparte el resultado de salas_disponibles (nombres de
-    sala, no de personas: no pasa por `_anonimizar`) para que la interfaz
-    pueda dibujar la lista de salas con la ocupada tachada, ademas de lo que
-    el modelo redacte en texto. Ver chat/views.py.
+    `vitrina` guarda aparte el resultado de dos herramientas, ANTES de
+    `_anonimizar`, para que la interfaz dibuje algo aparte de lo que el
+    modelo redacte en texto (ver chat/views.py):
+    - salas_disponibles: la lista de salas, con la ocupada tachada.
+    - contacto_de_persona: la tarjeta de contacto (nombre, cargo,
+      organizacion, mail, telefono) de una persona de Azerta Finder -por eso
+      no pasa por `_anonimizar` (es informacion de un tercero externo a la
+      nomina, no de la nomina).
     """
     # Techo de herramientas por paso: un modelo que se descarrila pidiendo
     # decenas de llamadas a la vez no debe poder dispararlas todas.
@@ -457,6 +465,9 @@ def _ejecutar_pedidos(pedidos, alias, llamadas, contexto=None, vitrina=None):
         if (vitrina is not None and pedido.name == "salas_disponibles"
                 and isinstance(crudo, dict) and isinstance(crudo.get("salas"), list)):
             vitrina["salas"] = crudo["salas"]
+        if (vitrina is not None and pedido.name == "contacto_de_persona"
+                and isinstance(crudo, dict) and crudo.get("encontrada") and crudo.get("nombre")):
+            vitrina["contacto"] = crudo
         resultados.append(_anonimizar(crudo, alias) if settings.ASISTENTE_ANONIMIZAR else crudo)
     return resultados
 
@@ -591,7 +602,7 @@ def _responder_gemini(mensaje, hoy, historial_previo=None, alias=None, contexto=
             ]
             meta = {"pasos": pasos, "herramientas": llamadas, "exitosa": exitosa,
                     "historial": nuevo_historial[-MAX_TURNOS_HISTORIAL:], "alias": alias,
-                    "salas": vitrina.get("salas")}
+                    "salas": vitrina.get("salas"), "contacto": vitrina.get("contacto")}
             return texto, meta
 
         # Se devuelve el contenido original del modelo, sin reconstruirlo: los
@@ -616,7 +627,7 @@ def _responder_gemini(mensaje, hoy, historial_previo=None, alias=None, contexto=
 
     return None, {"pasos": pasos, "herramientas": llamadas, "agotado": True,
                   "historial": historial_previo or [], "alias": alias,
-                  "salas": vitrina.get("salas")}
+                  "salas": vitrina.get("salas"), "contacto": vitrina.get("contacto")}
 
 
 def responder(mensaje, hoy, historial=None, alias=None, contexto=None):

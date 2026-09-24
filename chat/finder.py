@@ -22,12 +22,26 @@ logger = logging.getLogger(__name__)
 
 CACHE_FILAS = "finder:filas:v2"
 
-# Encabezados posibles para cada columna que Iris necesita, buscados como
-# substring del encabezado ya normalizado (sin tildes, en minuscula): la
-# planilla no la administra este proyecto, asi que no se asume el nombre
-# exacto de cada columna.
+# Encabezados posibles para cada columna, buscados como substring del
+# encabezado ya normalizado (sin tildes, en minuscula): la planilla no la
+# administra este proyecto, asi que no se asume el nombre exacto de cada
+# columna. Nombre y telefono son obligatorias (sin ellas no hay Finder);
+# cargo/organizacion/mail son opcionales, para la tarjeta de contacto -si
+# la planilla no las tiene, la tarjeta sale con menos datos, no falla.
 _CLAVES_NOMBRE = ("nombre",)
 _CLAVES_TELEFONO = ("telefono", "fono", "celular", "movil", "whatsapp", "contacto")
+_CLAVES_CARGO = ("cargo",)
+_CLAVES_ORGANIZACION = ("organizacion", "empresa")
+_CLAVES_MAIL = ("mail", "correo", "email")
+
+# (clave del resultado, encabezados que la identifican, si es obligatoria)
+_COLUMNAS = (
+    ("nombre", _CLAVES_NOMBRE, True),
+    ("telefono", _CLAVES_TELEFONO, True),
+    ("cargo", _CLAVES_CARGO, False),
+    ("organizacion", _CLAVES_ORGANIZACION, False),
+    ("mail", _CLAVES_MAIL, False),
+)
 
 
 class FinderError(Exception):
@@ -56,7 +70,8 @@ def _valor(fila, idx):
 
 
 def cargar(forzar=False):
-    """Filas de la planilla: [{"nombre", "telefono"}, ...].
+    """Filas de la planilla: [{"nombre", "telefono", "cargo"?, "organizacion"?,
+    "mail"?}, ...] -las tres ultimas solo si la planilla tiene esa columna.
 
     Cacheadas con TTL fijo (settings.AZERTA_FINDER_CACHE_TTL): a diferencia
     de la carpeta sincronizada, no hay un archivo local cuyo mtime avise que
@@ -100,17 +115,26 @@ def cargar(forzar=False):
     if not crudas:
         filas = []
     else:
-        idx_nombre = _columna(crudas[0], _CLAVES_NOMBRE)
-        idx_telefono = _columna(crudas[0], _CLAVES_TELEFONO)
-        if idx_nombre is None or idx_telefono is None:
+        indices = {clave: _columna(crudas[0], claves) for clave, claves, _ in _COLUMNAS}
+        faltan_obligatorias = [clave for clave, _, obligatoria in _COLUMNAS
+                               if obligatoria and indices[clave] is None]
+        if faltan_obligatorias:
             raise FinderError(
                 "No pude identificar las columnas de nombre y teléfono en la planilla.")
+
         filas = []
         for cruda in crudas[1:]:
-            nombre = _valor(cruda, idx_nombre)
+            nombre = _valor(cruda, indices["nombre"])
             if not nombre:
                 continue
-            filas.append({"nombre": nombre, "telefono": _valor(cruda, idx_telefono)})
+            fila = {"nombre": nombre, "telefono": _valor(cruda, indices["telefono"])}
+            for clave, _, obligatoria in _COLUMNAS:
+                if obligatoria:
+                    continue
+                valor = _valor(cruda, indices[clave])
+                if valor:
+                    fila[clave] = valor
+            filas.append(fila)
 
     cache.set(CACHE_FILAS, filas, settings.AZERTA_FINDER_CACHE_TTL)
     return filas

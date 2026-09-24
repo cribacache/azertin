@@ -562,10 +562,16 @@ def contacto_de_persona(nombre, _contexto=None):
     if fila is None:
         return {"encontrada": False, "motivo": "El nombre coincide con varias personas.",
                 "candidatos": candidatos}
-    if not fila["telefono"]:
-        return {"encontrada": True, "nombre": fila["nombre"],
-                "motivo": "Está en Azerta Finder, pero no tiene un teléfono registrado."}
-    return {"encontrada": True, "nombre": fila["nombre"], "telefono": fila["telefono"]}
+
+    # Se devuelve la fila completa (cargo/organizacion/mail, si la planilla
+    # los tiene) aunque solo hayan pedido el telefono: la interfaz la dibuja
+    # como una tarjeta de contacto aparte del texto (ver chat/asistente.py,
+    # vitrina["contacto"], igual mecanismo que salas_disponibles).
+    contacto = dict(fila)
+    if not contacto.get("telefono"):
+        contacto.pop("telefono", None)
+        contacto["motivo"] = "Está en Azerta Finder, pero no tiene un teléfono registrado."
+    return {"encontrada": True, **contacto}
 
 
 def salas_disponibles(fecha, hora_inicio, hora_fin, _contexto=None):

@@ -344,6 +344,50 @@ body::after {
 
 .salas li.ocupada .sala-estado { color: var(--gris-claro); }
 
+/* ---------- tarjeta de contacto (Azerta Finder) ---------- */
+.contacto {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  display: grid;
+  gap: 4px;
+  max-width: 280px;
+  border: 1px solid var(--linea);
+  border-top: 2px solid var(--rosado);
+  border-radius: 0 0 7px 7px;
+  background: rgba(221, 227, 233, .05);
+  animation: entrar .3s ease both;
+}
+
+.contacto-nombre { font-size: 14px; color: var(--humo); font-weight: 700; }
+
+.contacto-puesto {
+  font-size: 11.5px;
+  color: var(--gris-claro);
+  margin-top: -2px;
+}
+
+.contacto-datos {
+  margin: 6px 0 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  row-gap: 3px;
+}
+
+.contacto-datos dt {
+  font-size: 9.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--gris-claro);
+  align-self: baseline;
+}
+
+.contacto-datos dd {
+  margin: 0;
+  font-size: 12px;
+  color: var(--claro);
+}
+
 /* ---------- escribiendo ---------- */
 .typing { display: flex; gap: 5px; padding: 11px 0 0; }
 

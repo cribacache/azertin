@@ -47,7 +47,7 @@ function quitarVacio() {
   }
 }
 
-function addMessage(text, type, items = null, salas = null) {
+function addMessage(text, type, items = null, salas = null, contacto = null) {
   quitarVacio();
   const item = document.createElement("div");
   item.className = `message ${type}`;
@@ -94,6 +94,33 @@ function addMessage(text, type, items = null, salas = null) {
       lista.appendChild(li);
     }
     cuerpo.appendChild(lista);
+  }
+
+  // Tarjeta de contacto (contacto_de_persona, Azerta Finder): aparte del
+  // texto, con todos los datos que haya aunque solo hayan pedido el
+  // teléfono (ver chat/asistente.py::_ejecutar_pedidos).
+  if (contacto && contacto.nombre) {
+    const tarjeta = document.createElement("div");
+    tarjeta.className = "contacto";
+    const puesto = [contacto.cargo, contacto.organizacion].filter(Boolean).join(" · ");
+    tarjeta.innerHTML =
+      `<strong class="contacto-nombre"></strong>` +
+      (puesto ? `<span class="contacto-puesto"></span>` : "") +
+      `<dl class="contacto-datos"></dl>`;
+    tarjeta.querySelector(".contacto-nombre").textContent = contacto.nombre;
+    if (puesto) tarjeta.querySelector(".contacto-puesto").textContent = puesto;
+    const datos = tarjeta.querySelector(".contacto-datos");
+    const campo = (etiqueta, valor) => {
+      if (!valor) return;
+      const dt = document.createElement("dt");
+      dt.textContent = etiqueta;
+      const dd = document.createElement("dd");
+      dd.textContent = valor;
+      datos.append(dt, dd);
+    };
+    campo("Teléfono", contacto.telefono);
+    campo("Mail", contacto.mail);
+    cuerpo.appendChild(tarjeta);
   }
 
   messages.appendChild(item);
@@ -172,7 +199,7 @@ form.addEventListener("submit", async (event) => {
     const result = await response.json();
     escribiendo.remove();
     if (!response.ok) throw new Error(result.error);
-    addMessage(result.answer, "bot", result.items, result.salas);
+    addMessage(result.answer, "bot", result.items, result.salas, result.contacto);
     // apenada si Gemini no estaba disponible, contenta si salió bien
     const noDisponible = result.meta && result.meta.intencion === "no_disponible";
     estadoMascota(noDisponible ? "apenado" : "feliz", 2200);
