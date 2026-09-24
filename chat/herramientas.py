@@ -540,11 +540,14 @@ def finder_habilitado_para(contexto):
     return finder.usuario_habilitado(_correo_de(contexto))
 
 
-def contacto_de_persona(nombre, _contexto=None):
-    """Numero de contacto de una persona, desde Azerta Finder (una planilla
-    aparte de Drive, fuera de BUK). Acceso restringido: ver
-    finder_habilitado_para. Resuelve el nombre igual que las herramientas de
-    BUK (por tokens en comun), pero contra esa planilla, no contra la nomina.
+def buscar_contactos(consulta, _contexto=None):
+    """Contactos de Azerta Finder (una planilla aparte de Drive, fuera de
+    BUK) que calzan con `consulta`: por nombre, cargo U organizacion -no
+    hace falta el nombre completo de una persona. Acceso restringido: ver
+    finder_habilitado_para.
+
+    Devuelve TODOS los que calcen, no solo el primero: "los contactos de tal
+    organizacion" trae a todos los de esa organizacion, no a uno solo.
     """
     from . import finder
 
@@ -552,26 +555,27 @@ def contacto_de_persona(nombre, _contexto=None):
         return {"error": NO_HABILITADA}
 
     try:
-        fila, candidatos = finder.buscar(nombre)
+        encontrados = finder.buscar(consulta)
     except finder.FinderError as error:
         return {"error": str(error)}
 
-    if fila is None and candidatos is None:
-        return {"encontrada": False,
-                "motivo": "No hay nadie con ese nombre en Azerta Finder."}
-    if fila is None:
-        return {"encontrada": False, "motivo": "El nombre coincide con varias personas.",
-                "candidatos": candidatos}
-
     # Se devuelve la fila completa (cargo/organizacion/mail, si la planilla
     # los tiene) aunque solo hayan pedido el telefono: la interfaz la dibuja
-    # como una tarjeta de contacto aparte del texto (ver chat/asistente.py,
-    # vitrina["contacto"], igual mecanismo que salas_disponibles).
-    contacto = dict(fila)
-    if not contacto.get("telefono"):
-        contacto.pop("telefono", None)
-        contacto["motivo"] = "Está en Azerta Finder, pero no tiene un teléfono registrado."
-    return {"encontrada": True, **contacto}
+    # como tarjetas de contacto aparte del texto (ver chat/asistente.py,
+    # vitrina["contactos"], igual mecanismo que salas_disponibles).
+    contactos = []
+    for fila in encontrados[:MAX_PERSONAS]:
+        contacto = dict(fila)
+        if not contacto.get("telefono"):
+            contacto.pop("telefono", None)
+            contacto["motivo"] = "Está en Azerta Finder, pero no tiene un teléfono registrado."
+        contactos.append(contacto)
+
+    return {
+        "total": len(encontrados),
+        "contactos": contactos,
+        "truncado": len(encontrados) > MAX_PERSONAS,
+    }
 
 
 def salas_disponibles(fecha, hora_inicio, hora_fin, _contexto=None):
@@ -684,7 +688,7 @@ HERRAMIENTAS_SALAS = {"salas_disponibles", "crear_reunion", "quien_esta_en_sala"
 # Azerta Finder (numero de contacto): misma logica de correos habilitados que
 # salas, pero es una llave aparte -quien tiene una no necesariamente tiene la
 # otra (ver chat/finder.py).
-HERRAMIENTAS_FINDER = {"contacto_de_persona"}
+HERRAMIENTAS_FINDER = {"buscar_contactos"}
 
 # Herramientas que necesitan saber quien pregunta (su correo real), no solo
 # los argumentos que arma el modelo: chat/asistente.py les inyecta
@@ -742,7 +746,7 @@ FUNCIONES = {
     "crear_reunion": crear_reunion,
     "quien_esta_en_sala": quien_esta_en_sala,
     "reuniones_de_persona": reuniones_de_persona,
-    "contacto_de_persona": contacto_de_persona,
+    "buscar_contactos": buscar_contactos,
 }
 
 _FECHA = {"type": "string", "description": "Fecha en formato AAAA-MM-DD."}
@@ -1214,18 +1218,27 @@ ESQUEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "contacto_de_persona",
+            "name": "buscar_contactos",
             "description": (
-                "Numero de telefono/celular de UNA persona, desde Azerta "
-                "Finder. Usar SOLO cuando pregunten explicitamente por un "
-                "telefono, celular, whatsapp o 'como la contacto': no la "
-                "llames para ningun otro tipo de pregunta sobre esa persona "
-                "(para eso estan info_persona, ausencias_de_persona, etc)."
+                "Busca en Azerta Finder (base de contactos externos: "
+                "clientes, medios, autoridades) por nombre, cargo U "
+                "organizacion -no hace falta el nombre completo de una "
+                "persona, sirve tambien 'gerente general de tal empresa' o "
+                "'contactos de tal organizacion'. Devuelve TODOS los que "
+                "calcen, no solo el primero. Usar SOLO cuando pidan "
+                "explicitamente un telefono, celular, whatsapp, mail o "
+                "'como la contacto/los contacto' de alguien externo, o "
+                "cuando el mensaje empiece con '/finder': no la llames para "
+                "preguntas sobre el equipo de Azerta (para eso estan "
+                "info_persona, ausencias_de_persona, etc)."
             ),
             "parameters": {
                 "type": "object",
-                "properties": {"nombre": {"type": "string"}},
-                "required": ["nombre"],
+                "properties": {"consulta": {
+                    "type": "string",
+                    "description": "Nombre, cargo y/o organizacion a buscar.",
+                }},
+                "required": ["consulta"],
             },
         },
     },

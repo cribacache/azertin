@@ -344,14 +344,17 @@ body::after {
 
 .salas li.ocupada .sala-estado { color: var(--gris-claro); }
 
-/* ---------- tarjeta de contacto (Azerta Finder) ---------- */
-/* inline-grid: se achica o se estira segun el dato mas largo (un mail,
-   varios telefonos separados por "/"), en vez de un ancho fijo que cortaba
-   esos valores a la mitad. max-width la limita al ancho del mensaje: recien
-   ahi, si no entra igual, pasa a la siguiente linea (ver overflow-wrap en
-   .contacto-datos dd). */
+/* ---------- tarjetas de contacto (Azerta Finder) ---------- */
+/* Una lista de una o mas tarjetas (buscar_contactos puede traer a todos los
+   de una organizacion, no solo una persona). */
+.contactos { margin: 12px 0 0; display: grid; gap: 8px; }
+
+/* inline-grid: cada tarjeta se achica o se estira segun el dato mas largo
+   (un mail, varios telefonos separados por "/"), en vez de un ancho fijo que
+   cortaba esos valores a la mitad. max-width la limita al ancho del mensaje:
+   recien ahi, si no entra igual, pasa a la siguiente linea (ver
+   overflow-wrap en .contacto-datos dd). */
 .contacto {
-  margin: 12px 0 0;
   padding: 12px 14px;
   display: inline-grid;
   gap: 4px;

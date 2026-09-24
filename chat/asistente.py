@@ -127,21 +127,26 @@ _REGLA_SALAS = """
   de nadie."""
 
 _REGLA_FINDER = """
-- Azerta Finder (contacto_de_persona) es SOLO para el numero de contacto de
-  una persona. Usala UNICAMENTE cuando pregunten explicitamente por un
-  telefono, celular, whatsapp o "como la contacto", O cuando el mensaje
-  empiece con "/finder": eso es el identificador de Azerta Finder, una señal
-  explicita de que la consulta es sobre esa base de contactos. En ese caso el
-  nombre a buscar es todo lo que sigue a "/finder" (por ejemplo "/finder Jose
-  Mena" busca "Jose Mena"); llama a contacto_de_persona directo con ese
-  nombre, sin pedir mas contexto ni interpretarlo como otra cosa. Si "/finder"
-  viene sin nombre despues, pedilo. No menciones ni ofrezcas esta herramienta
-  para ningun otro tipo de pregunta. Si la persona no tiene un telefono
-  registrado, dilo tal cual, no inventes ni asumas uno. Cuando SI la
-  encuentra, la interfaz ya dibuja aparte una tarjeta con todos sus datos
-  (cargo, organizacion, mail, telefono): tu respuesta en texto no tiene que
-  repetirlos todos, alcanza con una frase breve confirmando que la
-  encontraste."""
+- Azerta Finder (buscar_contactos) es SOLO para contactos externos (clientes,
+  medios, autoridades) de esa base -no de la nomina de Azerta. Usala
+  UNICAMENTE cuando pregunten explicitamente por un telefono, celular,
+  whatsapp, mail o "como la/los contacto", O cuando el mensaje empiece con
+  "/finder": eso es el identificador de Azerta Finder, una señal explicita de
+  que la consulta es sobre esa base. En ese caso la consulta es todo lo que
+  sigue a "/finder" (por ejemplo "/finder gerente general de Viña Santa
+  Rita" busca por ese cargo y esa organizacion, no solo por nombre); llama a
+  buscar_contactos directo con ese texto, sin pedir mas contexto ni
+  interpretarlo como otra cosa. Si "/finder" viene sin nada despues, pedilo.
+  No menciones ni ofrezcas esta herramienta para ningun otro tipo de
+  pregunta.
+- buscar_contactos NO es "una persona": puede traer varios (por ejemplo,
+  "los contactos de tal organizacion"). Si trae mas de uno, dilo y nombralos
+  a todos brevemente, no elijas uno solo por tu cuenta. Si un contacto no
+  tiene telefono registrado, dilo tal cual para ese, no inventes ni asumas
+  uno. Si no encuentra a nadie ("total": 0), dilo con naturalidad. La
+  interfaz ya dibuja aparte una tarjeta por cada contacto encontrado (cargo,
+  organizacion, mail, telefono): tu respuesta en texto no tiene que repetir
+  todos los datos de cada uno, alcanza con nombrarlos y una frase breve."""
 
 MAX_TURNOS_HISTORIAL = 6  # 3 idas y vueltas: alcanza para el seguimiento sin
                           # inflar cada llamada con toda la conversacion.
@@ -435,10 +440,9 @@ def _ejecutar_pedidos(pedidos, alias, llamadas, contexto=None, vitrina=None):
     `_anonimizar`, para que la interfaz dibuje algo aparte de lo que el
     modelo redacte en texto (ver chat/views.py):
     - salas_disponibles: la lista de salas, con la ocupada tachada.
-    - contacto_de_persona: la tarjeta de contacto (nombre, cargo,
-      organizacion, mail, telefono) de una persona de Azerta Finder -por eso
-      no pasa por `_anonimizar` (es informacion de un tercero externo a la
-      nomina, no de la nomina).
+    - buscar_contactos: una tarjeta por cada contacto encontrado (nombre,
+      cargo, organizacion, mail, telefono) de Azerta Finder -por eso no pasa
+      por `_anonimizar` (son terceros externos a la nomina, no la nomina).
     """
     # Techo de herramientas por paso: un modelo que se descarrila pidiendo
     # decenas de llamadas a la vez no debe poder dispararlas todas.
@@ -465,9 +469,10 @@ def _ejecutar_pedidos(pedidos, alias, llamadas, contexto=None, vitrina=None):
         if (vitrina is not None and pedido.name == "salas_disponibles"
                 and isinstance(crudo, dict) and isinstance(crudo.get("salas"), list)):
             vitrina["salas"] = crudo["salas"]
-        if (vitrina is not None and pedido.name == "contacto_de_persona"
-                and isinstance(crudo, dict) and crudo.get("encontrada") and crudo.get("nombre")):
-            vitrina["contacto"] = crudo
+        if (vitrina is not None and pedido.name == "buscar_contactos"
+                and isinstance(crudo, dict) and isinstance(crudo.get("contactos"), list)
+                and crudo["contactos"]):
+            vitrina["contactos"] = crudo["contactos"]
         resultados.append(_anonimizar(crudo, alias) if settings.ASISTENTE_ANONIMIZAR else crudo)
     return resultados
 
@@ -602,7 +607,7 @@ def _responder_gemini(mensaje, hoy, historial_previo=None, alias=None, contexto=
             ]
             meta = {"pasos": pasos, "herramientas": llamadas, "exitosa": exitosa,
                     "historial": nuevo_historial[-MAX_TURNOS_HISTORIAL:], "alias": alias,
-                    "salas": vitrina.get("salas"), "contacto": vitrina.get("contacto")}
+                    "salas": vitrina.get("salas"), "contactos": vitrina.get("contactos")}
             return texto, meta
 
         # Se devuelve el contenido original del modelo, sin reconstruirlo: los
@@ -627,7 +632,7 @@ def _responder_gemini(mensaje, hoy, historial_previo=None, alias=None, contexto=
 
     return None, {"pasos": pasos, "herramientas": llamadas, "agotado": True,
                   "historial": historial_previo or [], "alias": alias,
-                  "salas": vitrina.get("salas"), "contacto": vitrina.get("contacto")}
+                  "salas": vitrina.get("salas"), "contactos": vitrina.get("contactos")}
 
 
 def responder(mensaje, hoy, historial=None, alias=None, contexto=None):

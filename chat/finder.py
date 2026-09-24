@@ -164,19 +164,41 @@ def cargar(forzar=False):
     return filas
 
 
-def buscar(nombre):
-    """La fila que mejor matchea `nombre` (por tokens en comun): (fila, candidatos).
+def _tokens_busqueda(texto):
+    limpio = "".join(c if c.isalnum() else " " for c in normalizar(texto or ""))
+    return [t for t in limpio.split() if len(t) >= 3]
 
-    `fila` es None si no matchea a nadie (candidatos tambien None) o si el
-    nombre coincide con varias personas (candidatos trae los nombres)."""
-    from . import personas
 
-    filas = cargar()
-    directorio = {i: {"nombre": f["nombre"]} for i, f in enumerate(filas)}
-    ids, _ = personas.buscar(nombre or "", directorio)
+def _texto_de_fila(fila):
+    """Nombre + cargo + organizacion: lo que se busca, no el mail ni el
+    telefono (buscar "56999813647" no es el caso de uso)."""
+    return " ".join(t for t in (fila.get("nombre"), fila.get("cargo"),
+                                fila.get("organizacion")) if t)
 
-    if not ids:
-        return None, None
-    if len(ids) > 1:
-        return None, sorted({filas[i]["nombre"] for i in ids})[:8]
-    return filas[next(iter(ids))], None
+
+def buscar(consulta):
+    """Contactos que calzan con `consulta`: nombre, cargo U organizacion -no
+    hace falta el nombre completo, ni que la respuesta sea una sola persona.
+
+    Se queda con las filas que comparten la MAYOR cantidad de palabras de la
+    consulta (no cualquiera que comparta una sola): "gerente general de
+    Viña Santa Rita" no debe traer a cualquier otro gerente general, y
+    "contactos de Amchan" trae a TODOS los de Amchan -a todos les toca el
+    mismo puntaje ("amchan"), asi que quedan todos, no solo el primero.
+    Lista vacia si ninguna fila comparte ni una palabra.
+    """
+    tokens = _tokens_busqueda(consulta)
+    if not tokens:
+        return []
+
+    puntuadas = []
+    for fila in cargar():
+        tokens_fila = set(_tokens_busqueda(_texto_de_fila(fila)))
+        puntaje = sum(1 for t in tokens if t in tokens_fila)
+        if puntaje:
+            puntuadas.append((puntaje, fila))
+
+    if not puntuadas:
+        return []
+    mejor = max(puntaje for puntaje, _ in puntuadas)
+    return [fila for puntaje, fila in puntuadas if puntaje == mejor]

@@ -1460,12 +1460,11 @@ class AzertaFinderTests(TestCase):
             ["Revisar", "CLAVE", "ORGANIZACIÓN", "CARGO", "NOMBRE", "MAIL", "TELEFONO"],
             [["NO", "CLIENTE", "ABIF", "Presidente", "Jose Manuel Mena",
              "presidencia@abif.cl", "228922801"]])
-        fila, candidatos = finder.buscar("Jose Manuel Mena")
-        self.assertIsNone(candidatos)
-        self.assertEqual(fila, {
+        resultados = finder.buscar("Jose Manuel Mena")
+        self.assertEqual(resultados, [{
             "nombre": "Jose Manuel Mena", "telefono": "228922801",
             "cargo": "Presidente", "organizacion": "ABIF", "mail": "presidencia@abif.cl",
-        })
+        }])
         mock_descargar.assert_called_once_with("file-id")
 
     @patch("chat.drive.descargar_archivo")
@@ -1473,8 +1472,8 @@ class AzertaFinderTests(TestCase):
         """Sin esas columnas, la fila sale igual -solo con nombre y telefono."""
         from chat import finder
         mock_descargar.return_value = _xlsx_bytes(["Nombre", "Teléfono"], [["Ana Rojas", "123"]])
-        fila, _ = finder.buscar("Ana")
-        self.assertEqual(fila, {"nombre": "Ana Rojas", "telefono": "123"})
+        resultados = finder.buscar("Ana")
+        self.assertEqual(resultados, [{"nombre": "Ana Rojas", "telefono": "123"}])
 
     def test_formatea_un_celular_chileno(self):
         from chat import finder
@@ -1499,8 +1498,8 @@ class AzertaFinderTests(TestCase):
         from chat import finder
         mock_descargar.return_value = _xlsx_bytes(
             ["Nombre", "Teléfono"], [["Ana Rojas", 56999813647]])
-        fila, _ = finder.buscar("Ana")
-        self.assertEqual(fila["telefono"], "+56 9 9981 3647")
+        resultados = finder.buscar("Ana")
+        self.assertEqual(resultados[0]["telefono"], "+56 9 9981 3647")
 
     @patch("chat.drive.descargar_archivo")
     def test_columnas_faltantes_da_un_error_legible(self, mock_descargar):
@@ -1514,25 +1513,53 @@ class AzertaFinderTests(TestCase):
     def test_nombre_desconocido(self, mock_descargar):
         from chat import finder
         mock_descargar.return_value = _xlsx_bytes(["Nombre", "Teléfono"], [["Ana Rojas", "123"]])
-        fila, candidatos = finder.buscar("nadie existe de verdad")
-        self.assertIsNone(fila)
-        self.assertIsNone(candidatos)
+        self.assertEqual(finder.buscar("nadie existe de verdad"), [])
 
     @patch("chat.drive.descargar_archivo")
-    def test_nombre_ambiguo_devuelve_candidatos(self, mock_descargar):
+    def test_busca_tambien_por_cargo_y_organizacion(self, mock_descargar):
+        """"gerente general de Viña Santa Rita" no debe traer a cualquier
+        otro "gerente general": solo calza quien comparte TODAS las
+        palabras (nombre+cargo+organizacion combinados)."""
+        from chat import finder
+        mock_descargar.return_value = _xlsx_bytes(
+            ["Nombre", "Cargo", "Organización", "Teléfono"],
+            [["Javier Bitar", "Gerente General", "Viña Santa Rita", "123"],
+             ["Jose Mena", "Gerente General", "ABIF", "456"]])
+        resultados = finder.buscar("quien es el gerente general de viña santa rita")
+        self.assertEqual([r["nombre"] for r in resultados], ["Javier Bitar"])
+
+    @patch("chat.drive.descargar_archivo")
+    def test_devuelve_todos_los_de_una_organizacion(self, mock_descargar):
+        from chat import finder
+        mock_descargar.return_value = _xlsx_bytes(
+            ["Nombre", "Organización", "Teléfono"],
+            [["Ana Rojas", "Amchan", "1"], ["Luis Soto", "Amchan", "2"],
+             ["Otra Persona", "ABIF", "3"]])
+        resultados = finder.buscar("todos los contactos de Amchan")
+        self.assertEqual({r["nombre"] for r in resultados}, {"Ana Rojas", "Luis Soto"})
+
+    @patch("chat.drive.descargar_archivo")
+    def test_varios_resultados_con_el_mismo_nombre_se_devuelven_todos(self, mock_descargar):
+        """Antes esto pedia desambiguar con "candidatos"; ahora, como se
+        puede pedir ver a todos, simplemente trae a los dos."""
         from chat import finder
         mock_descargar.return_value = _xlsx_bytes(
             ["Nombre", "Teléfono"], [["Ana Rojas", "1"], ["Ana Reyes", "2"]])
-        fila, candidatos = finder.buscar("Ana")
-        self.assertIsNone(fila)
-        self.assertEqual(candidatos, ["Ana Reyes", "Ana Rojas"])
+        resultados = finder.buscar("Ana")
+        self.assertEqual({r["nombre"] for r in resultados}, {"Ana Rojas", "Ana Reyes"})
+
+    @patch("chat.drive.descargar_archivo")
+    def test_consulta_sin_palabras_utiles_no_devuelve_nada(self, mock_descargar):
+        from chat import finder
+        mock_descargar.return_value = _xlsx_bytes(["Nombre", "Teléfono"], [["Ana Rojas", "1"]])
+        self.assertEqual(finder.buscar(""), [])
+        self.assertEqual(finder.buscar("de la y"), [])  # solo palabras de <3 letras
 
     @patch("chat.drive.descargar_archivo")
     def test_una_fila_sin_telefono_llega_con_telefono_vacio(self, mock_descargar):
         from chat import finder
         mock_descargar.return_value = _xlsx_bytes(["Nombre", "Teléfono"], [["Ana Rojas", None]])
-        fila, _ = finder.buscar("Ana")
-        self.assertEqual(fila["telefono"], "")
+        self.assertEqual(finder.buscar("Ana")[0]["telefono"], "")
 
     @patch("chat.drive.descargar_archivo")
     def test_una_fila_sin_nombre_se_descarta(self, mock_descargar):
@@ -1585,15 +1612,16 @@ class AzertaFinderNoDependeDeLaCarpetaTests(TestCase):
             self, mock_listar, mock_descargar):
         from chat import finder
         mock_descargar.return_value = _xlsx_bytes(["Nombre", "Teléfono"], [["Ana Rojas", "123"]])
-        fila, _ = finder.buscar("Ana")
-        self.assertEqual(fila["telefono"], "123")
+        resultados = finder.buscar("Ana")
+        self.assertEqual(resultados[0]["telefono"], "123")
         mock_listar.assert_not_called()
 
 
 @override_settings(**FINDER_CONFIG)
-class HerramientaContactoDePersonaTests(TestCase):
-    """chat/herramientas.py::contacto_de_persona: la barrera de acceso, no
-    la busqueda en si (ya cubierta en AzertaFinderTests)."""
+class HerramientaBuscarContactosTests(TestCase):
+    """chat/herramientas.py::buscar_contactos: la barrera de acceso y el
+    empaquetado del resultado, no la busqueda en si (ya cubierta en
+    AzertaFinderTests)."""
 
     def setUp(self):
         cache.clear()
@@ -1601,7 +1629,7 @@ class HerramientaContactoDePersonaTests(TestCase):
     def test_quien_no_esta_en_la_lista_no_toca_la_planilla(self):
         from chat import herramientas
         with patch("chat.finder.buscar") as mock_buscar:
-            salida = herramientas.contacto_de_persona(
+            salida = herramientas.buscar_contactos(
                 "Ana", _contexto=_contexto_de("ana@azerta.cl"))
         self.assertEqual(salida, {"error": herramientas.NO_HABILITADA})
         mock_buscar.assert_not_called()
@@ -1609,16 +1637,19 @@ class HerramientaContactoDePersonaTests(TestCase):
     def test_sin_contexto_no_toca_la_planilla(self):
         from chat import herramientas
         with patch("chat.finder.buscar") as mock_buscar:
-            salida = herramientas.contacto_de_persona("Ana", _contexto=None)
+            salida = herramientas.buscar_contactos("Ana", _contexto=None)
         self.assertEqual(salida, {"error": herramientas.NO_HABILITADA})
         mock_buscar.assert_not_called()
 
     def test_quien_esta_en_la_lista_recibe_el_telefono(self):
         from chat import herramientas
-        with patch("chat.finder.buscar", return_value=({"nombre": "Ana Rojas", "telefono": "123"}, None)):
-            salida = herramientas.contacto_de_persona(
+        with patch("chat.finder.buscar", return_value=[{"nombre": "Ana Rojas", "telefono": "123"}]):
+            salida = herramientas.buscar_contactos(
                 "Ana", _contexto=_contexto_de("palarcon@azerta.cl"))
-        self.assertEqual(salida, {"encontrada": True, "nombre": "Ana Rojas", "telefono": "123"})
+        self.assertEqual(salida, {
+            "total": 1, "truncado": False,
+            "contactos": [{"nombre": "Ana Rojas", "telefono": "123"}],
+        })
 
     def test_incluye_cargo_organizacion_y_mail_si_la_planilla_los_tiene(self):
         """Aunque solo pidan el telefono, la tarjeta va con todo lo que haya
@@ -1626,31 +1657,52 @@ class HerramientaContactoDePersonaTests(TestCase):
         from chat import herramientas
         fila = {"nombre": "Jose Mena", "telefono": "123", "cargo": "Presidente",
                 "organizacion": "ABIF", "mail": "jm@abif.cl"}
-        with patch("chat.finder.buscar", return_value=(fila, None)):
-            salida = herramientas.contacto_de_persona(
+        with patch("chat.finder.buscar", return_value=[fila]):
+            salida = herramientas.buscar_contactos(
                 "Jose", _contexto=_contexto_de("palarcon@azerta.cl"))
-        self.assertEqual(salida, {"encontrada": True, **fila})
+        self.assertEqual(salida["contactos"], [fila])
 
     def test_sin_telefono_registrado_lo_dice_sin_inventar_uno(self):
         from chat import herramientas
-        with patch("chat.finder.buscar", return_value=({"nombre": "Ana Rojas", "telefono": ""}, None)):
-            salida = herramientas.contacto_de_persona(
+        with patch("chat.finder.buscar", return_value=[{"nombre": "Ana Rojas", "telefono": ""}]):
+            salida = herramientas.buscar_contactos(
                 "Ana", _contexto=_contexto_de("palarcon@azerta.cl"))
-        self.assertTrue(salida["encontrada"])
-        self.assertNotIn("telefono", salida)
+        contacto = salida["contactos"][0]
+        self.assertNotIn("telefono", contacto)
+        self.assertIn("motivo", contacto)
 
-    def test_nombre_ambiguo_pide_elegir(self):
+    def test_varios_contactos_se_devuelven_todos(self):
         from chat import herramientas
-        with patch("chat.finder.buscar", return_value=(None, ["Ana Reyes", "Ana Rojas"])):
-            salida = herramientas.contacto_de_persona(
-                "Ana", _contexto=_contexto_de("palarcon@azerta.cl"))
-        self.assertFalse(salida["encontrada"])
-        self.assertEqual(salida["candidatos"], ["Ana Reyes", "Ana Rojas"])
+        fila_1 = {"nombre": "Ana Rojas", "telefono": "1", "organizacion": "Amchan"}
+        fila_2 = {"nombre": "Luis Soto", "telefono": "2", "organizacion": "Amchan"}
+        with patch("chat.finder.buscar", return_value=[fila_1, fila_2]):
+            salida = herramientas.buscar_contactos(
+                "Amchan", _contexto=_contexto_de("palarcon@azerta.cl"))
+        self.assertEqual(salida["total"], 2)
+        self.assertEqual(salida["contactos"], [fila_1, fila_2])
+
+    def test_sin_resultados(self):
+        from chat import herramientas
+        with patch("chat.finder.buscar", return_value=[]):
+            salida = herramientas.buscar_contactos(
+                "nadie existe", _contexto=_contexto_de("palarcon@azerta.cl"))
+        self.assertEqual(salida, {"total": 0, "contactos": [], "truncado": False})
+
+    def test_trunca_a_max_personas(self):
+        from chat import herramientas
+        muchos = [{"nombre": f"Persona {i}", "telefono": str(i)}
+                 for i in range(herramientas.MAX_PERSONAS + 5)]
+        with patch("chat.finder.buscar", return_value=muchos):
+            salida = herramientas.buscar_contactos(
+                "persona", _contexto=_contexto_de("palarcon@azerta.cl"))
+        self.assertEqual(salida["total"], herramientas.MAX_PERSONAS + 5)
+        self.assertEqual(len(salida["contactos"]), herramientas.MAX_PERSONAS)
+        self.assertTrue(salida["truncado"])
 
     def test_error_de_la_planilla_llega_como_mensaje(self):
         from chat import herramientas, finder
         with patch("chat.finder.buscar", side_effect=finder.FinderError("no configurado")):
-            salida = herramientas.contacto_de_persona(
+            salida = herramientas.buscar_contactos(
                 "Ana", _contexto=_contexto_de("palarcon@azerta.cl"))
         self.assertEqual(salida, {"error": "no configurado"})
 
@@ -1694,9 +1746,9 @@ class AzertaFinderApagadorTests(TestCase):
         self.assertFalse(asistente.salas_habilitadas(ctx_cristofer))
 
     def test_la_herramienta_se_declara_solo_a_quien_esta_en_la_lista(self):
-        self.assertIn("contacto_de_persona", self._declaradas(_contexto_de("palarcon@azerta.cl")))
-        self.assertNotIn("contacto_de_persona", self._declaradas(_contexto_de("ana@azerta.cl")))
-        self.assertNotIn("contacto_de_persona", self._declaradas(None))
+        self.assertIn("buscar_contactos", self._declaradas(_contexto_de("palarcon@azerta.cl")))
+        self.assertNotIn("buscar_contactos", self._declaradas(_contexto_de("ana@azerta.cl")))
+        self.assertNotIn("buscar_contactos", self._declaradas(None))
 
     @override_settings(GEMINI_API_KEY="AIza-prueba")
     @patch("chat.buk.requests.get", side_effect=fake_get)
@@ -1708,10 +1760,10 @@ class AzertaFinderApagadorTests(TestCase):
         self.client.post("/api/chat/", data=json.dumps({"message": "hola"}),
                          content_type="application/json")  # pruebas@azerta.cl: fuera de la lista
         config = mock_cliente.return_value.models.generate_content.call_args.kwargs["config"]
-        self.assertNotIn("contacto_de_persona", config.system_instruction)
+        self.assertNotIn("buscar_contactos", config.system_instruction)
         self.assertNotIn("Azerta Finder", config.system_instruction)
         declaradas = {f.name for t in config.tools for f in t.function_declarations}
-        self.assertNotIn("contacto_de_persona", declaradas)
+        self.assertNotIn("buscar_contactos", declaradas)
 
     @override_settings(GEMINI_API_KEY="AIza-prueba",
                        AZERTA_FINDER_USUARIOS={"pruebas@azerta.cl"})
@@ -1724,10 +1776,10 @@ class AzertaFinderApagadorTests(TestCase):
         self.client.post("/api/chat/", data=json.dumps({"message": "hola"}),
                          content_type="application/json")
         config = mock_cliente.return_value.models.generate_content.call_args.kwargs["config"]
-        self.assertIn("contacto_de_persona", config.system_instruction)
+        self.assertIn("buscar_contactos", config.system_instruction)
         self.assertIn("/finder", config.system_instruction)  # el identificador
         declaradas = {f.name for t in config.tools for f in t.function_declarations}
-        self.assertIn("contacto_de_persona", declaradas)
+        self.assertIn("buscar_contactos", declaradas)
 
     @override_settings(AZERTA_FINDER_USUARIOS={"pruebas@azerta.cl"})
     def test_el_cache_de_respuestas_separa_a_quien_tiene_finder(self):
@@ -1746,14 +1798,14 @@ class AzertaFinderApagadorTests(TestCase):
         self.assertIn("+finder", ambito)
 
     @override_settings(GEMINI_API_KEY="AIza-prueba", AZERTA_FINDER_USUARIOS={"pruebas@azerta.cl"})
-    @patch("chat.finder.buscar", return_value=({"nombre": "Jose Mena", "telefono": "123"}, None))
+    @patch("chat.finder.buscar", return_value=[{"nombre": "Jose Mena", "telefono": "123"}])
     @patch("chat.asistente._cliente_gemini")
     def test_de_punta_a_punta_el_identificador_llega_a_gemini_y_llama_la_herramienta(
             self, mock_cliente, mock_buscar):
-        """"/finder <nombre>" sigue pasando por Gemini (a diferencia de un
+        """"/finder <consulta>" sigue pasando por Gemini (a diferencia de un
         atajo que lo resolviera antes): esto simula que el modelo, siguiendo
-        _REGLA_FINDER, elige contacto_de_persona con el nombre correcto."""
-        pedido = _PedidoGemini("contacto_de_persona", {"nombre": "Jose Mena"})
+        _REGLA_FINDER, elige buscar_contactos con el texto correcto."""
+        pedido = _PedidoGemini("buscar_contactos", {"consulta": "Jose Mena"})
         mock_cliente.return_value.models.generate_content.side_effect = [
             _respuesta_gemini(llamadas=[pedido]),
             _respuesta_gemini(texto="El teléfono de Jose Mena es 123."),
@@ -1762,23 +1814,22 @@ class AzertaFinderApagadorTests(TestCase):
                                   content_type="application/json").json()
         mock_buscar.assert_called_once_with("Jose Mena")
         self.assertIn("123", cuerpo["answer"])
-        self.assertIn("contacto_de_persona", cuerpo["meta"]["herramientas"])
+        self.assertIn("buscar_contactos", cuerpo["meta"]["herramientas"])
         # la tarjeta va aparte del texto, con todo el dato disponible
-        self.assertEqual(cuerpo["contacto"],
-                         {"encontrada": True, "nombre": "Jose Mena", "telefono": "123"})
+        self.assertEqual(cuerpo["contactos"], [{"nombre": "Jose Mena", "telefono": "123"}])
 
     @override_settings(GEMINI_API_KEY="AIza-prueba", AZERTA_FINDER_USUARIOS={"pruebas@azerta.cl"},
                        ASISTENTE_ANONIMIZAR=False)
-    @patch("chat.finder.buscar", return_value=(
+    @patch("chat.finder.buscar", return_value=[
         {"nombre": "Jose Mena", "telefono": "123", "cargo": "Presidente",
-         "organizacion": "ABIF", "mail": "jm@abif.cl"}, None))
+         "organizacion": "ABIF", "mail": "jm@abif.cl"}])
     @patch("chat.asistente._cliente_gemini")
     def test_la_tarjeta_trae_todo_el_dato_aunque_el_texto_no_lo_repita(
             self, mock_cliente, mock_buscar):
         """El pedido del usuario en este test es solo por el telefono, pero
-        la tarjeta (vitrina["contacto"]) va con cargo/organizacion/mail
+        la tarjeta (vitrina["contactos"]) va con cargo/organizacion/mail
         igual, sin que el modelo tenga que mencionarlos en el texto."""
-        pedido = _PedidoGemini("contacto_de_persona", {"nombre": "Jose Mena"})
+        pedido = _PedidoGemini("buscar_contactos", {"consulta": "Jose Mena"})
         mock_cliente.return_value.models.generate_content.side_effect = [
             _respuesta_gemini(llamadas=[pedido]),
             _respuesta_gemini(texto="Su teléfono es 123."),
@@ -1786,22 +1837,40 @@ class AzertaFinderApagadorTests(TestCase):
         cuerpo = self.client.post(
             "/api/chat/", data=json.dumps({"message": "cual es el telefono de Jose Mena"}),
             content_type="application/json").json()
-        self.assertEqual(cuerpo["contacto"]["cargo"], "Presidente")
-        self.assertEqual(cuerpo["contacto"]["organizacion"], "ABIF")
-        self.assertEqual(cuerpo["contacto"]["mail"], "jm@abif.cl")
+        self.assertEqual(cuerpo["contactos"][0]["cargo"], "Presidente")
+        self.assertEqual(cuerpo["contactos"][0]["organizacion"], "ABIF")
+        self.assertEqual(cuerpo["contactos"][0]["mail"], "jm@abif.cl")
 
     @override_settings(GEMINI_API_KEY="AIza-prueba", AZERTA_FINDER_USUARIOS={"pruebas@azerta.cl"})
-    @patch("chat.finder.buscar", return_value=(None, None))
+    @patch("chat.finder.buscar", return_value=[])
     @patch("chat.asistente._cliente_gemini")
     def test_sin_encontrar_a_nadie_no_hay_tarjeta(self, mock_cliente, mock_buscar):
-        pedido = _PedidoGemini("contacto_de_persona", {"nombre": "Nadie"})
+        pedido = _PedidoGemini("buscar_contactos", {"consulta": "Nadie"})
         mock_cliente.return_value.models.generate_content.side_effect = [
             _respuesta_gemini(llamadas=[pedido]),
             _respuesta_gemini(texto="No encontré a esa persona en Azerta Finder."),
         ]
         cuerpo = self.client.post("/api/chat/", data=json.dumps({"message": "/finder Nadie"}),
                                   content_type="application/json").json()
-        self.assertIsNone(cuerpo["contacto"])
+        self.assertEqual(cuerpo["contactos"], [])
+
+    @override_settings(GEMINI_API_KEY="AIza-prueba", AZERTA_FINDER_USUARIOS={"pruebas@azerta.cl"})
+    @patch("chat.finder.buscar", return_value=[
+        {"nombre": "Ana Rojas", "telefono": "1", "organizacion": "Amchan"},
+        {"nombre": "Luis Soto", "telefono": "2", "organizacion": "Amchan"},
+    ])
+    @patch("chat.asistente._cliente_gemini")
+    def test_una_consulta_por_organizacion_trae_varias_tarjetas(self, mock_cliente, mock_buscar):
+        pedido = _PedidoGemini("buscar_contactos", {"consulta": "contactos de Amchan"})
+        mock_cliente.return_value.models.generate_content.side_effect = [
+            _respuesta_gemini(llamadas=[pedido]),
+            _respuesta_gemini(texto="Encontré dos contactos de Amchan: Ana Rojas y Luis Soto."),
+        ]
+        cuerpo = self.client.post(
+            "/api/chat/", data=json.dumps({"message": "/finder contactos de Amchan"}),
+            content_type="application/json").json()
+        self.assertEqual(len(cuerpo["contactos"]), 2)
+        self.assertEqual({c["nombre"] for c in cuerpo["contactos"]}, {"Ana Rojas", "Luis Soto"})
 
 
 @SIN_DOCUMENTOS

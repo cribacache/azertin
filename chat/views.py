@@ -84,11 +84,10 @@ def responder_con_modelo(mensaje, historial=None, alias=None, contexto=None):
         # aparte de lo que el modelo haya redactado en texto: la interfaz la
         # dibuja tachando la ocupada (chat/asistente.py::_ejecutar_pedidos).
         "salas": meta.get("salas") or [],
-        # Idem para contacto_de_persona (Azerta Finder): la interfaz dibuja
-        # una tarjeta con nombre/cargo/organizacion/mail/telefono, aparte del
-        # texto -asi la tarjeta trae todo el dato aunque solo hayan pedido
-        # el telefono.
-        "contacto": meta.get("contacto"),
+        # Idem para buscar_contactos (Azerta Finder): la interfaz dibuja una
+        # tarjeta por cada contacto encontrado (nombre/cargo/organizacion/
+        # mail/telefono), aparte del texto -puede ser mas de uno.
+        "contactos": meta.get("contactos") or [],
         "meta": {
             "intencion": "modelo",
             "modelo": asistente.modelo(),

@@ -55,7 +55,7 @@ MATRIZ_EJECUTIVO = {
     "reuniones_de_persona": LIBRE,
     # Azerta Finder: misma logica, la barrera es settings.AZERTA_FINDER_USUARIOS
     # (chat/herramientas.py::finder_habilitado_para), no el rol.
-    "contacto_de_persona": LIBRE,
+    "buscar_contactos": LIBRE,
     # Datos de personas: acotados a la jerarquía.
     "listar_ausencias": PARES,
     "quien_esta_trabajando": PARES,
