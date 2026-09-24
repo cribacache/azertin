@@ -1476,6 +1476,21 @@ class AzertaFinderTests(TestCase):
         fila, _ = finder.buscar("Ana")
         self.assertEqual(fila, {"nombre": "Ana Rojas", "telefono": "123"})
 
+    def test_formatea_un_celular_chileno(self):
+        from chat import finder
+        self.assertEqual(finder._formatear_telefono("56999813647"), "+56 9 9981 3647")
+        self.assertEqual(finder._formatear_telefono("999813647"), "+56 9 9981 3647")
+        self.assertEqual(finder._formatear_telefono("+56 9 9981 3647"), "+56 9 9981 3647")
+
+    def test_no_reformatea_lo_que_no_es_un_solo_celular_chileno(self):
+        """Fijo (no empieza con 9) o varios numeros separados por "/": se
+        dejan tal cual, forzarles el mismo formato quedaria peor."""
+        from chat import finder
+        self.assertEqual(finder._formatear_telefono("228922801"), "228922801")
+        self.assertEqual(finder._formatear_telefono("228922801 / 56 9 9821 0535"),
+                         "228922801 / 56 9 9821 0535")
+        self.assertEqual(finder._formatear_telefono(""), "")
+
     @patch("chat.drive.descargar_archivo")
     def test_un_telefono_guardado_como_numero_no_sale_con_punto_cero(self, mock_descargar):
         """Un telefono tipeado sin formato de texto en Excel/Sheets queda
@@ -1485,7 +1500,7 @@ class AzertaFinderTests(TestCase):
         mock_descargar.return_value = _xlsx_bytes(
             ["Nombre", "Teléfono"], [["Ana Rojas", 56999813647]])
         fila, _ = finder.buscar("Ana")
-        self.assertEqual(fila["telefono"], "56999813647")
+        self.assertEqual(fila["telefono"], "+56 9 9981 3647")
 
     @patch("chat.drive.descargar_archivo")
     def test_columnas_faltantes_da_un_error_legible(self, mock_descargar):

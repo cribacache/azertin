@@ -12,6 +12,7 @@ lista.
 
 import io
 import logging
+import re
 
 from django.conf import settings
 from django.core.cache import cache
@@ -75,6 +76,22 @@ def _valor(fila, idx):
     return str(valor).strip()
 
 
+def _formatear_telefono(valor):
+    """"56999813647" o "999813647" -> "+56 9 9981 3647" (celular chileno).
+
+    Solo formatea cuando el valor es EXACTAMENTE un celular chileno (con o
+    sin el 56 adelante): la planilla tambien trae fijos y mas de un numero
+    separados por "/", y forzarles el mismo formato los dejaria peor -mejor
+    mostrarlos tal cual la persona los cargo.
+    """
+    solo_digitos = re.sub(r"\D", "", valor)
+    if len(solo_digitos) == 9 and solo_digitos.startswith("9"):
+        solo_digitos = "56" + solo_digitos
+    if len(solo_digitos) == 11 and solo_digitos.startswith("569"):
+        return f"+{solo_digitos[:2]} {solo_digitos[2]} {solo_digitos[3:7]} {solo_digitos[7:]}"
+    return valor
+
+
 def cargar(forzar=False):
     """Filas de la planilla: [{"nombre", "telefono", "cargo"?, "organizacion"?,
     "mail"?}, ...] -las tres ultimas solo si la planilla tiene esa columna.
@@ -133,7 +150,8 @@ def cargar(forzar=False):
             nombre = _valor(cruda, indices["nombre"])
             if not nombre:
                 continue
-            fila = {"nombre": nombre, "telefono": _valor(cruda, indices["telefono"])}
+            fila = {"nombre": nombre,
+                   "telefono": _formatear_telefono(_valor(cruda, indices["telefono"]))}
             for clave, _, obligatoria in _COLUMNAS:
                 if obligatoria:
                     continue
