@@ -54,6 +54,9 @@ class _TurnoWidgets:
     departamento = forms.Select(attrs={"class": "campo-departamento"})
     forma_trabajo = forms.Select(attrs={"class": "campo-forma-trabajo"})
     modalidad = forms.Select(attrs={"class": "campo-modalidad"})
+    numero_puesto = forms.TextInput(attrs={
+        "class": "campo-numero-puesto", "size": "4", "placeholder": "N°",
+    })
     observacion = forms.Textarea(attrs={
         "class": "campo-observacion", "rows": 2,
         "placeholder": "A qué corresponde (solo Acuerdo / Conciliación familiar).",
@@ -76,11 +79,13 @@ class TurnoCrearForm(forms.ModelForm):
 
     class Meta:
         model = Turno
-        fields = ["buk_employee_id", "departamento", "forma_trabajo", "modalidad", "observacion"]
+        fields = ["buk_employee_id", "departamento", "forma_trabajo", "modalidad",
+                  "numero_puesto", "observacion"]
         widgets = {
             "departamento": _TurnoWidgets.departamento,
             "forma_trabajo": _TurnoWidgets.forma_trabajo,
             "modalidad": _TurnoWidgets.modalidad,
+            "numero_puesto": _TurnoWidgets.numero_puesto,
             "observacion": _TurnoWidgets.observacion,
         }
 
@@ -92,10 +97,11 @@ class TurnoEditarForm(forms.ModelForm):
 
     class Meta:
         model = Turno
-        fields = ["departamento", "forma_trabajo", "modalidad", "observacion"]
+        fields = ["departamento", "forma_trabajo", "modalidad", "numero_puesto", "observacion"]
         widgets = {
             "departamento": _TurnoWidgets.departamento,
             "forma_trabajo": _TurnoWidgets.forma_trabajo,
             "modalidad": _TurnoWidgets.modalidad,
+            "numero_puesto": _TurnoWidgets.numero_puesto,
             "observacion": _TurnoWidgets.observacion,
         }

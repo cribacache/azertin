@@ -24,6 +24,9 @@
         {% if user.is_staff %}
           <a class="salir-link" href="{% url 'portal-usuarios' %}" title="Portal de administración">Portal</a>
         {% endif %}
+        {% if PUEDE_VER_TURNOS %}
+          <a class="salir-link" href="{% url 'turnos-portal' %}" title="Turno y modalidad de cada persona">Turnos</a>
+        {% endif %}
         <a class="salir-link" href="{% url 'account_logout' %}" title="{{ user.email }}">Salir</a>
       </div>
     </header>

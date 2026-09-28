@@ -60,6 +60,10 @@
             <label>Modalidad</label>
             {{ form_crear.modalidad }}
           </div>
+          <div class="turno-campo">
+            <label>N° puesto</label>
+            {{ form_crear.numero_puesto }}
+          </div>
           <div class="turno-campo turno-campo-ancho">
             <label>Observación</label>
             {{ form_crear.observacion }}
@@ -83,6 +87,7 @@
           <th>Departamento</th>
           <th>Forma de trabajo</th>
           <th>Modalidad</th>
+          <th>N° puesto</th>
           <th>Observación</th>
           <th></th>
         </tr>
@@ -94,7 +99,7 @@
               {{ fila.nombre }}
               {% if fila.cargo %}<br><span class="tenue">{{ fila.cargo }}</span>{% endif %}
             </td>
-            <td colspan="4">
+            <td colspan="5">
               <form method="post" class="turno-editar-form">
                 {% csrf_token %}
                 <input type="hidden" name="accion" value="actualizar">
@@ -103,6 +108,7 @@
                   <td>{{ fila.form.departamento }}</td>
                   <td>{{ fila.form.forma_trabajo }}</td>
                   <td>{{ fila.form.modalidad }}</td>
+                  <td>{{ fila.form.numero_puesto }}</td>
                   <td>{{ fila.form.observacion }}</td>
                   <td><button type="submit">Guardar</button></td>
                 </tr></table>
@@ -118,7 +124,7 @@
             </td>
           </tr>
         {% empty %}
-          <tr><td colspan="6" class="tenue">Todavía no hay turnos cargados.</td></tr>
+          <tr><td colspan="7" class="tenue">Todavía no hay turnos cargados.</td></tr>
         {% endfor %}
       </tbody>
     </table>

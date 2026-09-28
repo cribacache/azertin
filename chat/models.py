@@ -414,6 +414,12 @@ class Turno(models.Model):
     departamento = models.CharField(max_length=32, choices=DEPARTAMENTOS)
     forma_trabajo = models.CharField(max_length=16, choices=FORMAS_TRABAJO)
     modalidad = models.CharField(max_length=32, choices=MODALIDADES)
+    # Texto, no numero: en la planilla original hay puestos con cero al
+    # inicio ("03") y filas sin puesto asignado todavia ("-" o vacio).
+    numero_puesto = models.CharField(
+        max_length=10, blank=True, verbose_name="N° de puesto",
+        help_text="El numero del puesto fisico, si tiene uno asignado.",
+    )
     observacion = models.TextField(
         blank=True,
         help_text="A qué corresponde el acuerdo o la conciliación familiar.",

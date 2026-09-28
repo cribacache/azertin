@@ -292,6 +292,7 @@ TEMPLATES = [
             "django.contrib.auth.context_processors.auth",
             "django.contrib.messages.context_processors.messages",
             "chat.context_processors.dominio_google",
+            "chat.context_processors.turnos_portal",
         ]},
     },
 ]

@@ -129,13 +129,16 @@ html, body { background: #eef0f4; color: #1b1d29; }
 .portal .turno-campo label { color: #5b5f73; font-weight: 700; }
 .portal .turno-campo select,
 .portal .turno-campo textarea,
+.portal .turno-campo input,
 .portal .turno-editar-tabla select,
-.portal .turno-editar-tabla textarea {
+.portal .turno-editar-tabla textarea,
+.portal .turno-editar-tabla input {
   border: 1px solid #c7cad8;
   border-radius: 6px;
   padding: 5px 7px;
   font: inherit;
 }
+.portal .campo-numero-puesto { width: 60px; }
 .portal .turno-campo textarea,
 .portal .turno-editar-tabla textarea { resize: vertical; min-height: 34px; }
 .portal .turno-campo-ancho { flex: 1 1 260px; }
