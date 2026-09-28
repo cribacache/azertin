@@ -117,3 +117,29 @@ html, body { background: #eef0f4; color: #1b1d29; }
 .portal .pill.bloqueada, .portal .pill.entrada_larga { background: #fde7e7; color: #b3261e; }
 .portal .pill.presupuesto { background: #fff1df; color: #a45c00; }
 .portal .pill.sin_datos, .portal .pill.modelo { background: #e8ebf6; color: #33406b; }
+
+/* Portal de turnos (/rrhh/turnos/) */
+.portal .turno-crear-form {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.portal .turno-campo { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; }
+.portal .turno-campo label { color: #5b5f73; font-weight: 700; }
+.portal .turno-campo select,
+.portal .turno-campo textarea,
+.portal .turno-editar-tabla select,
+.portal .turno-editar-tabla textarea {
+  border: 1px solid #c7cad8;
+  border-radius: 6px;
+  padding: 5px 7px;
+  font: inherit;
+}
+.portal .turno-campo textarea,
+.portal .turno-editar-tabla textarea { resize: vertical; min-height: 34px; }
+.portal .turno-campo-ancho { flex: 1 1 260px; }
+.portal .turno-editar-tabla { border: none; }
+.portal .turno-editar-tabla td { border: none; padding: 0 4px 0 0; vertical-align: middle; }
+.portal .turno-editar-tabla textarea { min-width: 160px; }
+.portal .turno-eliminar-form button { color: #b3261e; border-color: #f3c9c9; }

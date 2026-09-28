@@ -13,7 +13,7 @@ a cubrir, que no vinieron de una pregunta real en el chat.
 from django.contrib import admin, messages
 
 from .models import (ActividadChat, ConsultaNoResuelta, EventoSeguridad, InvitacionRol,
-                     PerfilUsuario, Pregunta, Propuesta)
+                     PerfilUsuario, Pregunta, Propuesta, Turno)
 
 
 @admin.register(PerfilUsuario)
@@ -121,6 +121,21 @@ class PropuestaAdmin(admin.ModelAdmin):
     search_fields = ("titulo", "descripcion")
     list_editable = ("estado",)
     ordering = ("-creada_en",)
+
+
+@admin.register(Turno)
+class TurnoAdmin(admin.ModelAdmin):
+    """El trabajo del dia a dia va en /rrhh/turnos/; esto es el respaldo."""
+
+    list_display = ("buk_employee_id", "departamento", "forma_trabajo", "modalidad",
+                    "actualizado_en", "actualizado_por")
+    list_filter = ("departamento", "forma_trabajo", "modalidad")
+    search_fields = ("buk_employee_id", "observacion")
+    ordering = ("departamento", "buk_employee_id")
+
+    def save_model(self, request, obj, form, change):
+        obj.actualizado_por = request.user
+        super().save_model(request, obj, form, change)
 
 
 @admin.register(Pregunta)

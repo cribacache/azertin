@@ -346,3 +346,103 @@ def contar(mensaje, intencion, desde_cache=False):
             Pregunta.objects.filter(pk=fila.pk).update(veces_modelo=1)
     except Exception:  # el registro es secundario; la respuesta manda
         pass
+
+
+class Turno(models.Model):
+    """Turno/modalidad de trabajo de cada persona, cargado a mano por
+    Personas desde `/rrhh/turnos/` (ver `chat/turnos_portal.py`).
+
+    Reemplaza como FUENTE DE CARGA a la planilla "Turnos Tanica y Digital"
+    que hoy lee `chat/turnos.py` (esa sigue intacta por ahora -leer estas
+    filas desde Iris es un paso aparte, todavia no conectado). El empleado se
+    guarda por `buk_employee_id`, no por nombre: mismo motivo que
+    `PerfilUsuario.buk_employee_id`, evita el matching difuso por texto que
+    `chat/turnos.py::buscar` necesita para la planilla.
+
+    La combinacion valida de forma_trabajo/modalidad (ver `clean()`) sale de
+    los datos reales de esa planilla: Permanente siempre es Presencial,
+    Hibrido siempre es Turno 1 o Turno 2 (que dividen semana por medio, hoja
+    aparte), y Transitorio es un arreglo puntual por persona -antes anotado
+    como "Hibrido" a secas en la planilla vieja, aca separado en Acuerdo o
+    Conciliacion familiar para que quede explicito a que corresponde, con
+    su detalle en `observacion`.
+    """
+
+    PERMANENTE = "permanente"
+    HIBRIDO = "hibrido"
+    TRANSITORIO = "transitorio"
+    FORMAS_TRABAJO = [
+        (PERMANENTE, "Permanente"),
+        (HIBRIDO, "Híbrido"),
+        (TRANSITORIO, "Transitorio"),
+    ]
+
+    PRESENCIAL = "presencial"
+    TURNO_1 = "turno_1"
+    TURNO_2 = "turno_2"
+    ACUERDO = "acuerdo"
+    CONCILIACION_FAMILIAR = "conciliacion_familiar"
+    MODALIDADES = [
+        (PRESENCIAL, "Presencial"),
+        (TURNO_1, "Turno 1"),
+        (TURNO_2, "Turno 2"),
+        (ACUERDO, "Acuerdo"),
+        (CONCILIACION_FAMILIAR, "Conciliación familiar"),
+    ]
+
+    # Modalidades que le corresponden a cada forma de trabajo. Permanente y
+    # Presencial son 1 a 1 (se autocompleta, ver TurnoForm); Hibrido y
+    # Transitorio dejan elegir entre sus dos opciones.
+    MODALIDADES_PERMITIDAS = {
+        PERMANENTE: {PRESENCIAL},
+        HIBRIDO: {TURNO_1, TURNO_2},
+        TRANSITORIO: {ACUERDO, CONCILIACION_FAMILIAR},
+    }
+    # Solo estas dos modalidades piden el detalle en observacion: son un
+    # arreglo puntual por persona, a diferencia de un turno fijo (rotativo o
+    # no) que no necesita explicarse caso a caso.
+    MODALIDADES_CON_OBSERVACION_OBLIGATORIA = {ACUERDO, CONCILIACION_FAMILIAR}
+
+    DEPARTAMENTOS = [
+        ("asuntos_publicos", "Asuntos Públicos"),
+        ("digital", "Digital"),
+        ("comunicaciones", "Comunicaciones"),
+        ("administracion", "Administración"),
+    ]
+
+    buk_employee_id = models.PositiveIntegerField(unique=True)
+    departamento = models.CharField(max_length=32, choices=DEPARTAMENTOS)
+    forma_trabajo = models.CharField(max_length=16, choices=FORMAS_TRABAJO)
+    modalidad = models.CharField(max_length=32, choices=MODALIDADES)
+    observacion = models.TextField(
+        blank=True,
+        help_text="A qué corresponde el acuerdo o la conciliación familiar.",
+    )
+    actualizado_en = models.DateTimeField(auto_now=True)
+    actualizado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="+",
+    )
+
+    class Meta:
+        verbose_name = "turno"
+        verbose_name_plural = "turnos"
+        ordering = ["departamento", "buk_employee_id"]
+
+    def __str__(self):
+        return f"Empleado BUK #{self.buk_employee_id} · {self.get_modalidad_display()}"
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        permitidas = self.MODALIDADES_PERMITIDAS.get(self.forma_trabajo, set())
+        if self.modalidad and permitidas and self.modalidad not in permitidas:
+            etiquetas = ", ".join(dict(self.MODALIDADES)[m] for m in permitidas)
+            raise ValidationError({
+                "modalidad": f"Para \"{self.get_forma_trabajo_display()}\" la modalidad "
+                              f"tiene que ser: {etiquetas}.",
+            })
+        if self.modalidad in self.MODALIDADES_CON_OBSERVACION_OBLIGATORIA and not self.observacion.strip():
+            raise ValidationError({
+                "observacion": "Detalla a qué corresponde este acuerdo o conciliación familiar.",
+            })

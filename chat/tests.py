@@ -4393,6 +4393,223 @@ class PortalTests(_DjangoTestCase):
         self.assertContains(resp_detalle, "pregunta de ayer")
 
 
+class TurnoModeloTests(TestCase):
+    """Reglas de Turno.clean(): que combinacion de forma_trabajo/modalidad
+    es valida, y cuando observacion es obligatoria."""
+
+    def _turno(self, **kwargs):
+        from chat.models import Turno
+
+        base = dict(buk_employee_id=1, departamento="digital",
+                    forma_trabajo="permanente", modalidad="presencial")
+        base.update(kwargs)
+        return Turno(**base)
+
+    def test_permanente_con_presencial_es_valido(self):
+        self._turno().full_clean()  # no lanza
+
+    def test_permanente_con_turno_1_no_es_valido(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError):
+            self._turno(forma_trabajo="permanente", modalidad="turno_1").full_clean()
+
+    def test_hibrido_con_turno_1_es_valido(self):
+        self._turno(forma_trabajo="hibrido", modalidad="turno_1").full_clean()
+
+    def test_hibrido_con_turno_2_es_valido(self):
+        self._turno(forma_trabajo="hibrido", modalidad="turno_2").full_clean()
+
+    def test_hibrido_con_presencial_no_es_valido(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError):
+            self._turno(forma_trabajo="hibrido", modalidad="presencial").full_clean()
+
+    def test_transitorio_con_acuerdo_y_observacion_es_valido(self):
+        self._turno(forma_trabajo="transitorio", modalidad="acuerdo",
+                    observacion="Llega a las 10 por estudios.").full_clean()
+
+    def test_transitorio_con_acuerdo_sin_observacion_no_es_valido(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError):
+            self._turno(forma_trabajo="transitorio", modalidad="acuerdo").full_clean()
+
+    def test_transitorio_con_conciliacion_familiar_sin_observacion_no_es_valido(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError):
+            self._turno(forma_trabajo="transitorio",
+                        modalidad="conciliacion_familiar").full_clean()
+
+    def test_transitorio_con_turno_1_no_es_valido(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError):
+            self._turno(forma_trabajo="transitorio", modalidad="turno_1",
+                        observacion="algo").full_clean()
+
+
+class TurnosPortalTests(_DjangoTestCase):
+    """/rrhh/turnos/: acceso SOLO a settings.TURNOS_PORTAL_USUARIOS, sin
+    excepcion de staff/superuser (mismo criterio que Salas y Finder)."""
+
+    DIRECTORIO = ({
+        335: {"id": 335, "nombre": "Ana Rojas", "cargo": "Analista"},
+        468: {"id": 468, "nombre": "Luis Soto", "cargo": "Diseñador"},
+    }, 0)
+
+    def setUp(self):
+        from django.contrib.auth.models import User
+        cache.clear()
+        self.autorizada = User.objects.create_user(
+            username="csilva@azerta.cl", email="csilva@azerta.cl")
+        self.superusuario_sin_permiso = User.objects.create_user(
+            username="root@azerta.cl", email="root@azerta.cl",
+            is_staff=True, is_superuser=True)
+        self.normal = User.objects.create_user(
+            username="normal@azerta.cl", email="normal@azerta.cl")
+
+    def test_sin_sesion_redirige_al_login(self):
+        resp = Client().get("/rrhh/turnos/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/accounts/login/", resp.url)
+
+    def test_superuser_sin_estar_en_la_lista_recibe_403(self):
+        c = Client()
+        c.force_login(self.superusuario_sin_permiso)
+        self.assertEqual(c.get("/rrhh/turnos/").status_code, 403)
+
+    def test_usuario_normal_recibe_403(self):
+        c = Client()
+        c.force_login(self.normal)
+        self.assertEqual(c.get("/rrhh/turnos/").status_code, 403)
+
+    @override_settings(TURNOS_PORTAL_USUARIOS={"csilva@azerta.cl"})
+    @patch("chat.turnos_portal.buk.directorio")
+    def test_autorizada_ve_la_pagina(self, mock_dir):
+        mock_dir.return_value = self.DIRECTORIO
+        c = Client()
+        c.force_login(self.autorizada)
+        resp = c.get("/rrhh/turnos/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Ana Rojas")
+
+    @override_settings(TURNOS_PORTAL_USUARIOS={"csilva@azerta.cl"})
+    @patch("chat.turnos_portal.buk.directorio")
+    def test_crear_un_turno(self, mock_dir):
+        from chat.models import Turno
+
+        mock_dir.return_value = self.DIRECTORIO
+        c = Client()
+        c.force_login(self.autorizada)
+        resp = c.post("/rrhh/turnos/", data={
+            "accion": "crear", "buk_employee_id": "335",
+            "departamento": "digital", "forma_trabajo": "permanente",
+            "modalidad": "presencial", "observacion": "",
+        })
+        self.assertEqual(resp.status_code, 302)
+        turno = Turno.objects.get(buk_employee_id=335)
+        self.assertEqual(turno.departamento, "digital")
+        self.assertEqual(turno.actualizado_por, self.autorizada)
+
+    @override_settings(TURNOS_PORTAL_USUARIOS={"csilva@azerta.cl"})
+    @patch("chat.turnos_portal.buk.directorio")
+    def test_no_se_puede_crear_dos_turnos_para_la_misma_persona(self, mock_dir):
+        from chat.models import Turno
+
+        mock_dir.return_value = self.DIRECTORIO
+        Turno.objects.create(buk_employee_id=335, departamento="digital",
+                             forma_trabajo="permanente", modalidad="presencial")
+        c = Client()
+        c.force_login(self.autorizada)
+        resp = c.get("/rrhh/turnos/")
+        # 335 ya tiene turno: no debe ofrecerse en el select de alta.
+        self.assertNotContains(resp, 'value="335"')
+
+    @override_settings(TURNOS_PORTAL_USUARIOS={"csilva@azerta.cl"})
+    @patch("chat.turnos_portal.buk.directorio")
+    def test_crear_hibrido_sin_turno_valido_no_pasa(self, mock_dir):
+        from chat.models import Turno
+
+        mock_dir.return_value = self.DIRECTORIO
+        c = Client()
+        c.force_login(self.autorizada)
+        resp = c.post("/rrhh/turnos/", data={
+            "accion": "crear", "buk_employee_id": "335",
+            "departamento": "digital", "forma_trabajo": "hibrido",
+            "modalidad": "presencial", "observacion": "",
+        })
+        self.assertEqual(resp.status_code, 200)  # se re-muestra con el error
+        self.assertFalse(Turno.objects.filter(buk_employee_id=335).exists())
+
+    @override_settings(TURNOS_PORTAL_USUARIOS={"csilva@azerta.cl"})
+    @patch("chat.turnos_portal.buk.directorio")
+    def test_crear_transitorio_sin_observacion_no_pasa(self, mock_dir):
+        from chat.models import Turno
+
+        mock_dir.return_value = self.DIRECTORIO
+        c = Client()
+        c.force_login(self.autorizada)
+        resp = c.post("/rrhh/turnos/", data={
+            "accion": "crear", "buk_employee_id": "335",
+            "departamento": "digital", "forma_trabajo": "transitorio",
+            "modalidad": "acuerdo", "observacion": "",
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Turno.objects.filter(buk_employee_id=335).exists())
+
+    @override_settings(TURNOS_PORTAL_USUARIOS={"csilva@azerta.cl"})
+    @patch("chat.turnos_portal.buk.directorio")
+    def test_actualizar_un_turno(self, mock_dir):
+        from chat.models import Turno
+
+        mock_dir.return_value = self.DIRECTORIO
+        turno = Turno.objects.create(
+            buk_employee_id=335, departamento="digital",
+            forma_trabajo="permanente", modalidad="presencial")
+        c = Client()
+        c.force_login(self.autorizada)
+        resp = c.post("/rrhh/turnos/", data={
+            "accion": "actualizar", "turno_id": turno.pk,
+            "departamento": "comunicaciones", "forma_trabajo": "transitorio",
+            "modalidad": "conciliacion_familiar",
+            "observacion": "Sale antes los viernes por cuidado de hijos.",
+        })
+        self.assertEqual(resp.status_code, 302)
+        turno.refresh_from_db()
+        self.assertEqual(turno.departamento, "comunicaciones")
+        self.assertEqual(turno.modalidad, "conciliacion_familiar")
+        self.assertEqual(turno.actualizado_por, self.autorizada)
+
+    @override_settings(TURNOS_PORTAL_USUARIOS={"csilva@azerta.cl"})
+    @patch("chat.turnos_portal.buk.directorio")
+    def test_eliminar_un_turno(self, mock_dir):
+        from chat.models import Turno
+
+        mock_dir.return_value = self.DIRECTORIO
+        turno = Turno.objects.create(
+            buk_employee_id=335, departamento="digital",
+            forma_trabajo="permanente", modalidad="presencial")
+        c = Client()
+        c.force_login(self.autorizada)
+        resp = c.post("/rrhh/turnos/", data={
+            "accion": "eliminar", "turno_id": turno.pk})
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(Turno.objects.filter(pk=turno.pk).exists())
+
+    @override_settings(TURNOS_PORTAL_USUARIOS={"csilva@azerta.cl"})
+    @patch("chat.turnos_portal.buk.directorio")
+    def test_si_buk_no_responde_igual_se_puede_ver_y_editar(self, mock_dir):
+        from chat.models import Turno
+
+        mock_dir.return_value = ({}, 0)
+        Turno.objects.create(buk_employee_id=335, departamento="digital",
+                             forma_trabajo="permanente", modalidad="presencial")
+        c = Client()
+        c.force_login(self.autorizada)
+        resp = c.get("/rrhh/turnos/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Empleado BUK #335")
+        self.assertContains(resp, "No pude conectar con BUK")
+
+
 # ===========================================================================
 # Documentos desde Google Drive (chat/drive.py, chat/docx.py). Bajo `test`
 # DOCUMENTOS_FUENTE queda en "local"; estas clases fuerzan "drive" y mockean

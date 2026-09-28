@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import portal, views
+from . import portal, turnos_portal, views
 
 urlpatterns = [
     path("", views.chat_page, name="chat-page"),
@@ -15,4 +15,7 @@ urlpatterns = [
     path("portal/conexiones/", portal.conexiones, name="portal-conexiones"),
     path("portal/conexiones/<int:usuario_id>/", portal.conexion_detalle,
          name="portal-conexion-detalle"),
+    # Portal de Personas: turno/modalidad de cada empleado (acceso propio,
+    # no es parte del portal de staff de arriba; ver chat/turnos_portal.py).
+    path("rrhh/turnos/", turnos_portal.turnos, name="turnos-portal"),
 ]

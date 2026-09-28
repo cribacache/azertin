@@ -159,6 +159,14 @@ SALAS_REUNIONES_USUARIOS = {
     c.strip().lower() for c in os.getenv("SALAS_REUNIONES_USUARIOS", "").split(",") if c.strip()
 }
 
+# Quien puede entrar a /rrhh/turnos/ a cargar el turno/modalidad de cada
+# persona (ver chat/turnos_portal.py). Mismo criterio que Finder y Salas:
+# SOLO estos correos, sin excepcion de rol/superusuario -es informacion de
+# Personas, no algo que cualquier staff del portal deba poder editar.
+TURNOS_PORTAL_USUARIOS = {
+    c.strip().lower() for c in os.getenv("TURNOS_PORTAL_USUARIOS", "").split(",") if c.strip()
+}
+
 DRIVE_CACHE_DIR = Path(os.getenv("DRIVE_CACHE_DIR", BASE_DIR / ".drive_cache"))
 # Cada cuanto se vuelve a mirar Drive (solo baja lo que cambio).
 DRIVE_SYNC_TTL = int(os.getenv("DRIVE_SYNC_TTL", "300"))

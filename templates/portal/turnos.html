@@ -1,0 +1,128 @@
+{% load static %}{% load assets %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Turnos · Iris</title>
+  <link rel="icon" type="image/png" href="{% static_v 'chat/favicon.png' %}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static_v 'chat/app.css' %}">
+  <link rel="stylesheet" href="{% static_v 'portal/portal.css' %}">
+</head>
+<body>
+  <main class="portal">
+    <div class="top">
+      <div>
+        <h1>Turno y modalidad de cada persona</h1>
+        <p class="intro">Carga acá el turno de cada empleado: departamento,
+          forma de trabajo y modalidad. Esto reemplaza a la planilla
+          "Turnos Tanica y Digital" como fuente de carga.</p>
+      </div>
+      <a class="salir-link" href="{% url 'chat-page' %}">Volver al chat</a>
+    </div>
+
+    {% if not buk_ok %}
+      <div class="aviso">No pude conectar con BUK: no se puede agregar gente nueva
+        ni ver nombre/cargo hasta que vuelva a responder, pero los turnos ya
+        cargados se pueden seguir editando o eliminando.</div>
+    {% endif %}
+
+    {% if messages %}
+      {% for mensaje in messages %}
+        <div class="aviso{% if mensaje.tags == 'success' %} aviso-ok{% endif %}">{{ mensaje }}</div>
+      {% endfor %}
+    {% endif %}
+
+    <section class="invitar">
+      <h2>Agregar turno</h2>
+      {% if not hay_cupo %}
+        <p class="tenue">Todos los activos de BUK ya tienen un turno cargado.</p>
+      {% else %}
+        <form method="post" class="turno-crear-form">
+          {% csrf_token %}
+          <input type="hidden" name="accion" value="crear">
+          <div class="turno-campo">
+            <label>Empleado</label>
+            {{ form_crear.buk_employee_id }}
+          </div>
+          <div class="turno-campo">
+            <label>Departamento</label>
+            {{ form_crear.departamento }}
+          </div>
+          <div class="turno-campo">
+            <label>Forma de trabajo</label>
+            {{ form_crear.forma_trabajo }}
+          </div>
+          <div class="turno-campo">
+            <label>Modalidad</label>
+            {{ form_crear.modalidad }}
+          </div>
+          <div class="turno-campo turno-campo-ancho">
+            <label>Observación</label>
+            {{ form_crear.observacion }}
+          </div>
+          <button type="submit">Agregar</button>
+        </form>
+        {% if form_crear.errors %}
+          <div class="aviso">
+            {% for campo, errores in form_crear.errors.items %}
+              {{ campo }}: {{ errores|join:", " }}<br>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endif %}
+    </section>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Empleado</th>
+          <th>Departamento</th>
+          <th>Forma de trabajo</th>
+          <th>Modalidad</th>
+          <th>Observación</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in filas %}
+          <tr>
+            <td>
+              {{ fila.nombre }}
+              {% if fila.cargo %}<br><span class="tenue">{{ fila.cargo }}</span>{% endif %}
+            </td>
+            <td colspan="4">
+              <form method="post" class="turno-editar-form">
+                {% csrf_token %}
+                <input type="hidden" name="accion" value="actualizar">
+                <input type="hidden" name="turno_id" value="{{ fila.turno.pk }}">
+                <table class="turno-editar-tabla"><tr>
+                  <td>{{ fila.form.departamento }}</td>
+                  <td>{{ fila.form.forma_trabajo }}</td>
+                  <td>{{ fila.form.modalidad }}</td>
+                  <td>{{ fila.form.observacion }}</td>
+                  <td><button type="submit">Guardar</button></td>
+                </tr></table>
+              </form>
+            </td>
+            <td>
+              <form method="post" class="turno-eliminar-form">
+                {% csrf_token %}
+                <input type="hidden" name="accion" value="eliminar">
+                <input type="hidden" name="turno_id" value="{{ fila.turno.pk }}">
+                <button type="submit">Eliminar</button>
+              </form>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="tenue">Todavía no hay turnos cargados.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </main>
+  <script src="{% static_v 'portal/turnos.js' %}"></script>
+</body>
+</html>
