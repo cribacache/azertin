@@ -4484,7 +4484,11 @@ class TurnosPortalTests(_DjangoTestCase):
     @override_settings(TURNOS_PORTAL_USUARIOS={"csilva@azerta.cl"})
     @patch("chat.turnos_portal.buk.directorio")
     def test_autorizada_ve_la_pagina(self, mock_dir):
+        from chat.models import Turno
+
         mock_dir.return_value = self.DIRECTORIO
+        Turno.objects.create(buk_employee_id=335, departamento="digital",
+                             forma_trabajo="permanente", modalidad="presencial")
         c = Client()
         c.force_login(self.autorizada)
         resp = c.get("/rrhh/turnos/")
@@ -4519,9 +4523,15 @@ class TurnosPortalTests(_DjangoTestCase):
                              forma_trabajo="permanente", modalidad="presencial")
         c = Client()
         c.force_login(self.autorizada)
-        resp = c.get("/rrhh/turnos/")
-        # 335 ya tiene turno: no debe ofrecerse en el select de alta.
-        self.assertNotContains(resp, 'value="335"')
+        # 335 ya tiene turno: no es una opcion valida para el alta (el
+        # ChoiceField de TurnoCrearForm solo ofrece a los que no tienen).
+        resp = c.post("/rrhh/turnos/", data={
+            "accion": "crear", "buk_employee_id": "335",
+            "departamento": "digital", "forma_trabajo": "permanente",
+            "modalidad": "presencial", "observacion": "",
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(Turno.objects.filter(buk_employee_id=335).count(), 1)
 
     @override_settings(TURNOS_PORTAL_USUARIOS={"csilva@azerta.cl"})
     @patch("chat.turnos_portal.buk.directorio")

@@ -63,7 +63,22 @@ class _TurnoWidgets:
     })
 
 
-class TurnoCrearForm(forms.ModelForm):
+class _TurnoChoiceFieldsMixin(forms.ModelForm):
+    """departamento/forma_trabajo/modalidad declarados a mano, en vez de
+    dejar que ModelForm los derive del modelo: un CharField con choices y
+    sin `default=` que ModelForm.formfield() SIEMPRE le agrega una opcion en
+    blanco ("---------") aunque el campo no admita blank -no tiene sentido
+    ofrecerla en una fila que ya tiene un valor asignado."""
+
+    departamento = forms.ChoiceField(choices=Turno.DEPARTAMENTOS,
+                                     widget=_TurnoWidgets.departamento)
+    forma_trabajo = forms.ChoiceField(choices=Turno.FORMAS_TRABAJO,
+                                      widget=_TurnoWidgets.forma_trabajo)
+    modalidad = forms.ChoiceField(choices=Turno.MODALIDADES,
+                                  widget=_TurnoWidgets.modalidad)
+
+
+class TurnoCrearForm(_TurnoChoiceFieldsMixin):
     """Alta de una asignacion nueva: unica vez que se elige el empleado
     (despues no se puede cambiar, ver TurnoEditarForm). `buk_employee_id` es
     un ChoiceField, no el PositiveIntegerField del modelo: las opciones
@@ -82,15 +97,12 @@ class TurnoCrearForm(forms.ModelForm):
         fields = ["buk_employee_id", "departamento", "forma_trabajo", "modalidad",
                   "numero_puesto", "observacion"]
         widgets = {
-            "departamento": _TurnoWidgets.departamento,
-            "forma_trabajo": _TurnoWidgets.forma_trabajo,
-            "modalidad": _TurnoWidgets.modalidad,
             "numero_puesto": _TurnoWidgets.numero_puesto,
             "observacion": _TurnoWidgets.observacion,
         }
 
 
-class TurnoEditarForm(forms.ModelForm):
+class TurnoEditarForm(_TurnoChoiceFieldsMixin):
     """Edicion en la fila de la tabla: todo menos el empleado (eso no
     cambia una vez creada la fila; si se equivocaron de persona, se borra y
     se crea de nuevo)."""
@@ -99,9 +111,6 @@ class TurnoEditarForm(forms.ModelForm):
         model = Turno
         fields = ["departamento", "forma_trabajo", "modalidad", "numero_puesto", "observacion"]
         widgets = {
-            "departamento": _TurnoWidgets.departamento,
-            "forma_trabajo": _TurnoWidgets.forma_trabajo,
-            "modalidad": _TurnoWidgets.modalidad,
             "numero_puesto": _TurnoWidgets.numero_puesto,
             "observacion": _TurnoWidgets.observacion,
         }
