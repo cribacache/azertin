@@ -2863,43 +2863,119 @@ class TurnosTests(TestCase):
         with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
             self.assertEqual(len(turnos.listar()), 3)
 
-    def test_herramienta_listar_turnos_arma_la_salida(self):
-        from chat import herramientas
-        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
-            resultado = herramientas.listar_turnos(modalidad="presencial")
-        self.assertEqual(resultado["total"], 1)
-        self.assertEqual(resultado["personas"][0]["nombre"], "Ana Rojas")
+class TurnoHerramientasTests(TestCase):
+    """turno_de_persona / listar_turnos (chat/herramientas.py): desde la
+    tabla Turno (chat/models.py, cargada en /rrhh/turnos/), no desde la
+    planilla -esa sigue viva solo para la Hoja 2 (info_presencial, ver
+    SemanasPresencialesTests)."""
+
+    def setUp(self):
+        cache.clear()
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     def test_turno_de_persona_resuelve_el_nombre_via_buk(self, mocked):
         from chat import herramientas
-        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
-            resultado = herramientas.turno_de_persona("Ana")
+        from chat.models import Turno
+
+        Turno.objects.create(buk_employee_id=335, departamento="asuntos_publicos",
+                             forma_trabajo="permanente", modalidad="presencial",
+                             numero_puesto="12")
+        resultado = herramientas.turno_de_persona("Ana")
         self.assertTrue(resultado["encontrada"])
         self.assertTrue(resultado["turno_registrado"])
         self.assertEqual(resultado["nombre"], "Ana Rojas")
         self.assertEqual(resultado["forma_trabajo"], "Permanente")
-        self.assertEqual(resultado["area"], "Asuntos Publicos")
+        self.assertEqual(resultado["departamento"], "Asuntos Públicos")
+        self.assertEqual(resultado["numero_puesto"], "12")
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_turno_de_persona_sin_fila_en_la_tabla(self, mocked):
+        from chat import herramientas
+        resultado = herramientas.turno_de_persona("Ana")
+        self.assertTrue(resultado["encontrada"])
+        self.assertFalse(resultado["turno_registrado"])
+        self.assertEqual(resultado["nombre"], "Ana Rojas")
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     def test_turno_de_persona_presencial_siempre_para_permanente(self, mocked):
         """"Presencial" (forma de trabajo "Permanente") no varia semana a
         semana: no hace falta Hoja 2 para saberlo."""
         from chat import herramientas
-        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
-            resultado = herramientas.turno_de_persona("Ana")
+        from chat.models import Turno
+
+        Turno.objects.create(buk_employee_id=335, departamento="digital",
+                             forma_trabajo="permanente", modalidad="presencial")
+        resultado = herramientas.turno_de_persona("Ana")
         self.assertEqual(resultado["presencial"],
                          {"es_presencial": True, "semana": "esta semana", "siempre": True})
 
     @patch("chat.buk.requests.get", side_effect=fake_get)
     def test_turno_de_persona_hibrido_sin_datos_de_hoja2(self, mocked):
-        """Alguien hibrido con turno rotativo, pero sin Hoja 2 disponible
-        (aca, DOCUMENTOS_FUENTE=local): no se puede saber si ESTA semana
-        puntual le toca presencial."""
+        """Turno 1/Turno 2 (rotativo), pero sin Hoja 2 disponible (aca,
+        DOCUMENTOS_FUENTE=local): no se puede saber si ESTA semana puntual
+        le toca presencial."""
         from chat import herramientas
-        with override_settings(DOCUMENTOS_FUENTE="local", DOCUMENTOS_DIR=self._carpeta()):
-            resultado = herramientas.turno_de_persona("Juan Soto")
+        from chat.models import Turno
+
+        Turno.objects.create(buk_employee_id=335, departamento="digital",
+                             forma_trabajo="hibrido", modalidad="turno_1")
+        with override_settings(DOCUMENTOS_FUENTE="local"):
+            resultado = herramientas.turno_de_persona("Ana")
         self.assertIsNone(resultado["presencial"])
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_turno_de_persona_acuerdo_no_calcula_presencial(self, mocked):
+        """Acuerdo/Conciliacion familiar son arreglos puntuales, sin patron
+        semanal: "presencial" viene None y el detalle esta en observacion,
+        nunca se intenta calcular contra la Hoja 2."""
+        from chat import herramientas
+        from chat.models import Turno
+
+        Turno.objects.create(buk_employee_id=335, departamento="digital",
+                             forma_trabajo="transitorio", modalidad="acuerdo",
+                             observacion="Llega a las 10 por estudios.")
+        resultado = herramientas.turno_de_persona("Ana")
+        self.assertIsNone(resultado["presencial"])
+        self.assertEqual(resultado["modalidad"], "Acuerdo")
+        self.assertEqual(resultado["observacion"], "Llega a las 10 por estudios.")
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_listar_turnos_filtra_por_modalidad(self, mocked):
+        from chat import herramientas
+        from chat.models import Turno
+
+        Turno.objects.create(buk_employee_id=335, departamento="digital",
+                             forma_trabajo="permanente", modalidad="presencial")
+        Turno.objects.create(buk_employee_id=468, departamento="digital",
+                             forma_trabajo="hibrido", modalidad="turno_1")
+        resultado = herramientas.listar_turnos(modalidad="presencial")
+        self.assertEqual(resultado["total"], 1)
+        self.assertEqual(resultado["personas"][0]["nombre"], "Ana Rojas")
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_listar_turnos_hibrido_es_forma_de_trabajo_no_modalidad(self, mocked):
+        """"Hibrido" ya no es un valor de modalidad en la tabla nueva (esa
+        distincion ahora es Acuerdo/Conciliacion familiar): filtrar por
+        modalidad="hibrido" no debe traer a nadie, forma_trabajo="hibrido" si."""
+        from chat import herramientas
+        from chat.models import Turno
+
+        Turno.objects.create(buk_employee_id=468, departamento="digital",
+                             forma_trabajo="hibrido", modalidad="turno_1")
+        self.assertEqual(herramientas.listar_turnos(modalidad="hibrido")["total"], 0)
+        self.assertEqual(herramientas.listar_turnos(forma_trabajo="hibrido")["total"], 1)
+
+    @patch("chat.buk.requests.get", side_effect=fake_get)
+    def test_listar_turnos_combina_filtros(self, mocked):
+        from chat import herramientas
+        from chat.models import Turno
+
+        Turno.objects.create(buk_employee_id=335, departamento="digital",
+                             forma_trabajo="hibrido", modalidad="turno_1")
+        Turno.objects.create(buk_employee_id=468, departamento="asuntos_publicos",
+                             forma_trabajo="hibrido", modalidad="turno_1")
+        resultado = herramientas.listar_turnos(forma_trabajo="hibrido", departamento="Digital")
+        self.assertEqual([p["nombre"] for p in resultado["personas"]], ["Ana Rojas"])
 
 
 class SemanasPresencialesTests(TestCase):

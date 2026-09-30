@@ -451,20 +451,47 @@ def beneficios_de_persona(nombre):
     }
 
 
-def turno_de_persona(nombre, fecha=None):
-    """Turno, modalidad, puesto y si tiene presencial en una semana puntual,
-    desde la planilla de turnos.
+def _presencial_de(turno, fecha):
+    """Adapta un Turno (chat/models.py) al formato que espera
+    turnos.info_presencial (chat/turnos.py): ese sigue siendo quien sabe que
+    semana le toca presencial a cada turno rotativo, porque ese calendario
+    (Hoja 2 de la planilla vieja) no se migro a la tabla nueva -es la unica
+    pieza que todavia depende de la planilla.
 
-    BUK no tiene este dato: vive aparte (chat/turnos.py). Resuelve el nombre
-    contra la nomina de BUK igual que el resto de las herramientas
-    "de_persona", y despues cruza por nombre con esa planilla.
-
-    "modalidad" ("Presencial"/"Hibrido") es la condicion general, pero para
-    alguien hibrido con turno rotativo (Turno 1/Turno 2) no dice si ESTA
-    semana puntual le toca presencial o no -eso alterna semana por medio,
-    segun Hoja 2 (turnos.info_presencial). El campo "presencial" trae esa
-    respuesta ya resuelta.
+    None si la modalidad es un arreglo puntual (Acuerdo/Conciliacion
+    familiar): no tiene un patron semanal fijo que calcular, el detalle esta
+    en "observacion" (ver turno_de_persona).
     """
+    from .models import Turno
+
+    if turno.modalidad == Turno.PRESENCIAL:
+        fila = {"modalidad": "Presencial", "forma_trabajo": ""}
+    elif turno.modalidad == Turno.TURNO_1:
+        fila = {"modalidad": "Hibrido", "forma_trabajo": "Turno 1"}
+    elif turno.modalidad == Turno.TURNO_2:
+        fila = {"modalidad": "Hibrido", "forma_trabajo": "Turno 2"}
+    else:
+        return None
+    return turnos.info_presencial(fila, fecha)
+
+
+def turno_de_persona(nombre, fecha=None):
+    """Turno, modalidad, N° de puesto y si tiene presencial en una semana
+    puntual, desde la tabla que carga Personas en /rrhh/turnos/
+    (chat.models.Turno).
+
+    BUK no tiene este dato. Resuelve el nombre contra la nomina de BUK igual
+    que el resto de las herramientas "de_persona", y despues busca el turno
+    por buk_employee_id (no por nombre: sin matching difuso de por medio).
+
+    "modalidad" puede ser Presencial (todas las semanas), Turno 1/Turno 2
+    (rotativo: alterna semana por medio, el campo "presencial" ya trae
+    resuelto si ESTA semana puntual toca) o Acuerdo/Conciliacion familiar
+    (un arreglo puntual por persona, sin patron semanal fijo -"presencial"
+    viene None, el detalle esta en "observacion").
+    """
+    from .models import Turno
+
     directorio, _ = buk.directorio()
     ids, _ = personas.buscar(nombre or "", directorio)
 
@@ -477,43 +504,73 @@ def turno_de_persona(nombre, fecha=None):
             "candidatos": sorted(directorio[i]["nombre"] for i in ids)[:8],
         }
 
-    persona = directorio[next(iter(ids))]
-    fila = turnos.buscar(persona["nombre"])
-    if fila is None:
+    pid = next(iter(ids))
+    persona = directorio[pid]
+    turno = Turno.objects.filter(buk_employee_id=pid).first()
+    if turno is None:
         return {
             "encontrada": True,
             "nombre": persona["nombre"],
             "turno_registrado": False,
-            "motivo": "Esta persona no aparece en la planilla de turnos.",
+            "motivo": "Esta persona no tiene un turno cargado en el sistema.",
         }
+
     return {
         "encontrada": True,
         "turno_registrado": True,
         "nombre": persona["nombre"],
-        "area": fila["area"] or None,
-        "forma_trabajo": fila["forma_trabajo"] or None,
-        "modalidad": fila["modalidad"] or None,
-        "puesto": fila["puesto"] if fila["puesto"] not in ("", "-") else None,
-        "observacion": fila["observacion"] or None,
-        "presencial": turnos.info_presencial(fila, _fecha(fecha)),
+        "departamento": turno.get_departamento_display(),
+        "forma_trabajo": turno.get_forma_trabajo_display(),
+        "modalidad": turno.get_modalidad_display(),
+        "numero_puesto": turno.numero_puesto or None,
+        "observacion": turno.observacion or None,
+        "presencial": _presencial_de(turno, _fecha(fecha)),
     }
 
 
-def listar_turnos(modalidad=None, forma_trabajo=None, area=None):
-    """Personas que matchean un turno/modalidad/area, sin nombrar a nadie.
+def _valores_que_calzan(filtro, choices):
+    """Los values de `choices` (pares value/etiqueta de un CharField con
+    choices) cuya etiqueta matchea `filtro`, sin importar tildes ni
+    mayusculas (mismo criterio que chat/turnos.py::_coincide). Si no matchea
+    ninguna etiqueta, se prueba el filtro tal cual como value -por si Gemini
+    ya manda el value interno ("turno_1") en vez de la etiqueta ("Turno 1")."""
+    clave = intents.normalizar(filtro or "")
+    calzan = [valor for valor, etiqueta in choices if clave in intents.normalizar(etiqueta)]
+    return calzan or [filtro]
 
-    Al reves de turno_de_persona: aca se pregunta por el grupo, no por
-    alguien puntual. Mismos filtros que ofrece la planilla (chat/turnos.py).
+
+def listar_turnos(modalidad=None, forma_trabajo=None, departamento=None):
+    """Personas que matchean un turno/modalidad/departamento, sin nombrar a
+    una persona en particular (tabla que carga Personas en /rrhh/turnos/,
+    chat.models.Turno). Al reves de turno_de_persona: aca se pregunta por el
+    grupo, no por alguien puntual.
     """
-    filas = turnos.listar(modalidad=modalidad, forma_trabajo=forma_trabajo, area=area)
-    return {
-        "total": len(filas),
-        "personas": [
-            {"nombre": f["nombre"], "cargo": f["cargo"], "area": f["area"],
-             "forma_trabajo": f["forma_trabajo"], "modalidad": f["modalidad"]}
-            for f in sorted(filas, key=lambda f: f["nombre"])
-        ],
-    }
+    from .models import Turno
+
+    qs = Turno.objects.all()
+    if forma_trabajo:
+        qs = qs.filter(forma_trabajo__in=_valores_que_calzan(forma_trabajo, Turno.FORMAS_TRABAJO))
+    if modalidad:
+        qs = qs.filter(modalidad__in=_valores_que_calzan(modalidad, Turno.MODALIDADES))
+    if departamento:
+        qs = qs.filter(departamento__in=_valores_que_calzan(departamento, Turno.DEPARTAMENTOS))
+
+    directorio, _ = buk.directorio()
+    personas_lista = []
+    for turno in qs:
+        emp = directorio.get(turno.buk_employee_id)
+        if emp is None:
+            continue  # de baja en BUK, la fila de turno todavia no se limpio
+        personas_lista.append({
+            "nombre": emp["nombre"],
+            "cargo": emp["cargo"],
+            "departamento": turno.get_departamento_display(),
+            "forma_trabajo": turno.get_forma_trabajo_display(),
+            "modalidad": turno.get_modalidad_display(),
+        })
+
+    personas_lista.sort(key=lambda p: p["nombre"])
+    return {"total": len(personas_lista), "personas": personas_lista}
 
 
 def _correo_de(contexto):
@@ -1023,17 +1080,22 @@ ESQUEMAS = [
         "function": {
             "name": "turno_de_persona",
             "description": (
-                "Turno (permanente, turno 1, turno 2), modalidad (presencial, "
-                "hibrido), puesto, y si tiene presencial en una semana "
-                "puntual (campo 'presencial' de la respuesta), de UNA "
-                "persona. Usar SIEMPRE para 'X es presencial o hibrido', "
-                "'X tiene presencial esta/la proxima semana', 'que turno "
-                "tiene X', 'en que puesto se sienta X' -aunque la pregunta "
-                "mencione 'hoy' ('¿X esta presencial hoy?'): esto NO es lo "
-                "mismo que si vino a trabajar (eso es "
-                "quien_esta_trabajando/listar_ausencias). Alguien hibrido con "
-                "turno rotativo tiene presencial solo semana por medio: usa "
-                "'fecha' para preguntar por una semana distinta a la actual."
+                "Departamento, forma de trabajo (permanente, hibrido, "
+                "transitorio), modalidad (presencial, turno 1, turno 2, "
+                "acuerdo, conciliacion familiar), numero de puesto, y si "
+                "tiene presencial en una semana puntual (campo 'presencial' "
+                "de la respuesta), de UNA persona. Usar SIEMPRE para 'X es "
+                "presencial o hibrido', 'X tiene presencial esta/la proxima "
+                "semana', 'que turno tiene X', 'en que puesto se sienta X', "
+                "'que acuerdo tiene X' -aunque la pregunta mencione 'hoy' "
+                "('¿X esta presencial hoy?'): esto NO es lo mismo que si "
+                "vino a trabajar (eso es quien_esta_trabajando/"
+                "listar_ausencias). Turno 1/Turno 2 (rotativo) tiene "
+                "presencial solo semana por medio: usa 'fecha' para "
+                "preguntar por una semana distinta a la actual. Acuerdo y "
+                "Conciliacion familiar son arreglos puntuales por persona, "
+                "sin patron semanal fijo -'presencial' viene vacio para "
+                "esos casos, respondé con el campo 'observacion'."
             ),
             "parameters": {
                 "type": "object",
@@ -1056,22 +1118,27 @@ ESQUEMAS = [
         "function": {
             "name": "listar_turnos",
             "description": (
-                "Quienes tienen un turno, modalidad o forma de trabajo "
-                "determinada, SIN nombrar a una persona en particular: 'quien "
-                "tiene turno presencial', 'quien es hibrido', 'quien esta en "
-                "turno 1 en Digital'. Si la pregunta nombra a alguien, usa "
+                "Quienes tienen un turno, modalidad, forma de trabajo o "
+                "departamento determinado, SIN nombrar a una persona en "
+                "particular: 'quien tiene turno presencial', 'quien es "
+                "hibrido', 'quien esta en turno 1 en Digital', 'quien tiene "
+                "un acuerdo'. Si la pregunta nombra a alguien, usa "
                 "turno_de_persona en vez de esta: es al reves, aca se "
-                "pregunta por el grupo."
+                "pregunta por el grupo. 'Hibrido' es una FORMA DE TRABAJO, "
+                "no una modalidad -para 'quien es hibrido' usa "
+                "forma_trabajo='hibrido', no modalidad."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "modalidad": {"type": "string",
-                                 "description": "Ej. presencial, hibrido. Omitir para no filtrar."},
                     "forma_trabajo": {"type": "string",
-                                     "description": "Ej. permanente, turno 1, turno 2. Omitir para no filtrar."},
-                    "area": {"type": "string",
-                            "description": "Area/equipo de la planilla de turnos. Omitir para toda la empresa."},
+                                     "description": "permanente, hibrido o transitorio. Omitir para no filtrar."},
+                    "modalidad": {"type": "string",
+                                 "description": ("presencial, turno 1, turno 2, acuerdo o "
+                                                 "conciliacion familiar. Omitir para no filtrar.")},
+                    "departamento": {"type": "string",
+                                     "description": ("Asuntos Publicos, Digital, Comunicaciones o "
+                                                     "Administracion. Omitir para toda la empresa.")},
                 },
             },
         },
