@@ -61,10 +61,13 @@ Reglas:
   "semana" TAL CUAL para nombrar la semana ("esta semana", "la proxima
   semana", o ya armado como "la semana del 21 de septiembre" si esta lejos):
   no calcules ni menciones una fecha exacta por tu cuenta cuando el campo
-  diga "esta semana" o "la proxima semana". Si "presencial" viene vacio
-  (modalidad Acuerdo o Conciliacion familiar: un arreglo puntual, sin patron
-  semanal fijo), respondé con el campo "observacion" en vez de inventar un
-  patron.
+  diga "esta semana" o "la proxima semana". Si "presencial" viene vacio y
+  preguntaron especificamente por una semana puntual, DECILO explicito en
+  vez de responder solo con la descripcion general del turno: si la
+  modalidad es Acuerdo o Conciliacion familiar (arreglo puntual, sin patron
+  semanal fijo), respondé con el campo "observacion"; si es Turno 1/Turno 2
+  y aun asi vino vacio, es que no hay datos cargados para esa semana -decilo
+  asi, no lo omitas ni lo inventes.
 - "En que estado esta mi/su dia administrativo/permiso/licencia/vacaciones"
   (aprobada, pendiente, rechazada) es estado_solicitudes, NUNCA
   ausencias_de_persona: esa otra solo dice si alguien esta o va a estar
